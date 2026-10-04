@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import random
 import requests
 from jinja2 import Template
@@ -53,8 +54,6 @@ def fetch_wikipedia_image(latin_name):
         print(f"Gagal mengambil gambar: {e}")
     return "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1080"
 
-import time
-
 # 4. Riset via Gemini API dengan Retry Otomatis
 client = genai.Client(api_key=GEMINI_KEY)
 
@@ -94,7 +93,7 @@ for attempt in range(3):
         break
     except Exception as e:
         print(f"Server Google sibuk (percobaan {attempt+1}/3): {e}")
-        time.sleep(5 * (attempt + 1))  # Beri jeda 5, 10 detik
+        time.sleep(5 * (attempt + 1))  # Jeda: 5 detik, lalu 10 detik
 
 if not response:
     raise RuntimeError("Gagal menghubungi Gemini setelah 3 percobaan.")
