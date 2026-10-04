@@ -53,7 +53,9 @@ def fetch_wikipedia_image(latin_name):
         print(f"Gagal mengambil gambar: {e}")
     return "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1080"
 
-# 4. Inferensi Konten via Gemini API
+import time
+
+# 4. Riset via Gemini API dengan Retry Otomatis
 client = genai.Client(api_key=GEMINI_KEY)
 
 prompt = f"""
@@ -77,13 +79,25 @@ Kembalikan format JSON murni tanpa markdown:
 """
 
 print("[1/4] Meriset konten via Gemini...")
-response = client.models.generate_content(
-    model="gemini-3.8-flash",
-    contents=prompt,
-    config=types.GenerateContentConfig(
-        response_mime_type="application/json"
-    )
-)
+
+# Coba hingga 3 kali jika server Google sedang sibuk (503)
+response = None
+for attempt in range(3):
+    try:
+        response = client.models.generate_content(
+            model="gemini-3.8-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json"
+            )
+        )
+        break
+    except Exception as e:
+        print(f"Server Google sibuk (percobaan {attempt+1}/3): {e}")
+        time.sleep(5 * (attempt + 1))  # Beri jeda 5, 10 detik
+
+if not response:
+    raise RuntimeError("Gagal menghubungi Gemini setelah 3 percobaan.")
 
 data = json.loads(response.text)
 print(f"-> Terpilih: {data['name']} ({data['latin_name']})")
