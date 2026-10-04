@@ -71,6 +71,19 @@
       height: 100%;
       object-fit: cover;
     }
+    /* Label kredit lisensi semi-transparan */
+    .photo-credit {
+      position: absolute;
+      bottom: 10px;
+      left: 10px;
+      background: rgba(0, 0, 0, 0.65);
+      color: #cbd5e0;
+      font-size: 13px;
+      padding: 4px 10px;
+      border-radius: 4px;
+      letter-spacing: 0.5px;
+      backdrop-filter: blur(4px);
+    }
     .facts-box {
       flex: 1.2;
       display: flex;
@@ -129,6 +142,7 @@
   <div class="main-content">
     <div class="image-box">
       <img src="{{ image_url }}" alt="{{ name }}">
+      <div class="photo-credit">📷 Wikimedia Commons / CC-BY-SA</div>
     </div>
     <div class="facts-box">
       {% for fact in facts %}
