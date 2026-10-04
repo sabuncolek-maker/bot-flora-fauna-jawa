@@ -2,30 +2,38 @@ name: Auto Post Flora Fauna Jawa
 
 on:
   schedule:
-    # Berjalan tiap hari jam 08.00 WIB (sama dengan jam 01.00 UTC)
     - cron: '0 1 * * *'
-  workflow_dispatch: # Mengaktifkan tombol "Run workflow" untuk uji coba manual kapan saja
+  workflow_dispatch:
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - name: Ambil Kode dari Repositori
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Pasang Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Pasang Library dan Browser
+      - name: Install Dependencies
         run: |
           pip install -r requirements.txt
           playwright install --with-deps chromium
 
-      - name: Jalankan AI Agent dan Upload ke FB
+      - name: Jalankan Bot
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
           FB_PAGE_ACCESS_TOKEN: ${{ secrets.FB_PAGE_ACCESS_TOKEN }}
         run: python generate_and_post.py
+
+      - name: Simpan Catatan Riwayat ke GitHub
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add posted.txt
+          git diff --quiet && git diff --staged --quiet || (git commit -m "chore: perbarui riwayat postingan [skip ci]" && git push)
