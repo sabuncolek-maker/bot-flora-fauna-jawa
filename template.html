@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    }
+    body {
+      width: 1080px;
+      height: 1080px;
+      background: radial-gradient(circle at 80% 20%, #1e3a2f 0%, #0d1713 100%);
+      color: #f0f4f1;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 80px 70px;
+      border: 12px solid #2d5a46;
+    }
+    .header {
+      border-bottom: 2px solid rgba(255, 255, 255, 0.15);
+      padding-bottom: 25px;
+    }
+    .badge {
+      display: inline-block;
+      background: #38a169;
+      color: #0b1d14;
+      font-size: 20px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      padding: 6px 18px;
+      border-radius: 6px;
+      margin-bottom: 15px;
+    }
+    .title {
+      font-size: 58px;
+      font-weight: 900;
+      line-height: 1.1;
+      color: #ffffff;
+      text-transform: uppercase;
+    }
+    .latin {
+      font-size: 26px;
+      font-style: italic;
+      color: #a0aec0;
+      margin-top: 8px;
+    }
+    .facts-container {
+      display: flex;
+      flex-direction: column;
+      gap: 22px;
+      margin: 30px 0;
+    }
+    .fact-card {
+      background: rgba(255, 255, 255, 0.05);
+      border-left: 6px solid #48bb78;
+      padding: 20px 24px;
+      border-radius: 0 12px 12px 0;
+      backdrop-filter: blur(10px);
+    }
+    .fact-title {
+      font-size: 24px;
+      font-weight: 700;
+      color: #68d391;
+      margin-bottom: 6px;
+    }
+    .fact-desc {
+      font-size: 22px;
+      line-height: 1.4;
+      color: #e2e8f0;
+    }
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-top: 2px solid rgba(255, 255, 255, 0.15);
+      padding-top: 20px;
+    }
+    .habitat-tag {
+      font-size: 20px;
+      color: #cbd5e0;
+      background: rgba(0,0,0,0.3);
+      padding: 8px 16px;
+      border-radius: 8px;
+    }
+    .brand {
+      font-size: 24px;
+      font-weight: 800;
+      letter-spacing: 1px;
+      color: #48bb78;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="badge">{{ category }} &bull; PULAU JAWA</div>
+    <div class="title">{{ name }}</div>
+    <div class="latin">{{ latin_name }}</div>
+  </div>
+
+  <div class="facts-container">
+    {% for fact in facts %}
+    <div class="fact-card">
+      <div class="fact-title">{{ fact.title }}</div>
+      <div class="fact-desc">{{ fact.desc }}</div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="footer">
+    <div class="habitat-tag">📍 Habitat: {{ habitat }}</div>
+    <div class="brand">Indo Bizarre</div>
+  </div>
+</body>
+</html>
