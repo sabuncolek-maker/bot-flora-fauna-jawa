@@ -12,65 +12,87 @@
     body {
       width: 1080px;
       height: 1080px;
-      background: radial-gradient(circle at 80% 20%, #1e3a2f 0%, #0d1713 100%);
+      background: #0d1713;
       color: #f0f4f1;
       display: flex;
       flex-direction: column;
-      justify-content: space-between;
-      padding: 80px 70px;
+      padding: 50px 60px;
       border: 12px solid #2d5a46;
+      justify-content: space-between;
     }
     .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
       border-bottom: 2px solid rgba(255, 255, 255, 0.15);
-      padding-bottom: 25px;
+      padding-bottom: 18px;
     }
     .badge {
       display: inline-block;
       background: #38a169;
       color: #0b1d14;
-      font-size: 20px;
+      font-size: 18px;
       font-weight: 800;
       text-transform: uppercase;
       letter-spacing: 2px;
-      padding: 6px 18px;
+      padding: 5px 14px;
       border-radius: 6px;
-      margin-bottom: 15px;
+      margin-bottom: 8px;
     }
     .title {
-      font-size: 58px;
+      font-size: 46px;
       font-weight: 900;
-      line-height: 1.1;
       color: #ffffff;
       text-transform: uppercase;
+      line-height: 1.1;
     }
     .latin {
-      font-size: 26px;
+      font-size: 22px;
       font-style: italic;
       color: #a0aec0;
-      margin-top: 8px;
+      margin-top: 4px;
     }
-    .facts-container {
+    .main-content {
+      display: flex;
+      gap: 30px;
+      margin: 25px 0;
+      height: 660px;
+    }
+    .image-box {
+      flex: 1.1;
+      border-radius: 16px;
+      overflow: hidden;
+      border: 3px solid #2d5a46;
+      background: #1a2e24;
+      position: relative;
+    }
+    .image-box img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .facts-box {
+      flex: 1.2;
       display: flex;
       flex-direction: column;
-      gap: 22px;
-      margin: 30px 0;
+      justify-content: space-between;
+      gap: 15px;
     }
     .fact-card {
       background: rgba(255, 255, 255, 0.05);
       border-left: 6px solid #48bb78;
-      padding: 20px 24px;
+      padding: 16px 20px;
       border-radius: 0 12px 12px 0;
-      backdrop-filter: blur(10px);
     }
     .fact-title {
-      font-size: 24px;
+      font-size: 20px;
       font-weight: 700;
       color: #68d391;
-      margin-bottom: 6px;
+      margin-bottom: 4px;
     }
     .fact-desc {
-      font-size: 22px;
-      line-height: 1.4;
+      font-size: 18px;
+      line-height: 1.35;
       color: #e2e8f0;
     }
     .footer {
@@ -78,17 +100,17 @@
       justify-content: space-between;
       align-items: center;
       border-top: 2px solid rgba(255, 255, 255, 0.15);
-      padding-top: 20px;
+      padding-top: 18px;
     }
     .habitat-tag {
-      font-size: 20px;
+      font-size: 18px;
       color: #cbd5e0;
-      background: rgba(0,0,0,0.3);
-      padding: 8px 16px;
-      border-radius: 8px;
+      background: rgba(255,255,255,0.07);
+      padding: 6px 16px;
+      border-radius: 6px;
     }
     .brand {
-      font-size: 24px;
+      font-size: 22px;
       font-weight: 800;
       letter-spacing: 1px;
       color: #48bb78;
@@ -97,18 +119,25 @@
 </head>
 <body>
   <div class="header">
-    <div class="badge">{{ category }} &bull; PULAU JAWA</div>
-    <div class="title">{{ name }}</div>
-    <div class="latin">{{ latin_name }}</div>
+    <div>
+      <div class="badge">{{ category }} &bull; PULAU JAWA</div>
+      <div class="title">{{ name }}</div>
+      <div class="latin">{{ latin_name }}</div>
+    </div>
   </div>
 
-  <div class="facts-container">
-    {% for fact in facts %}
-    <div class="fact-card">
-      <div class="fact-title">{{ fact.title }}</div>
-      <div class="fact-desc">{{ fact.desc }}</div>
+  <div class="main-content">
+    <div class="image-box">
+      <img src="{{ image_url }}" alt="{{ name }}">
     </div>
-    {% endfor %}
+    <div class="facts-box">
+      {% for fact in facts %}
+      <div class="fact-card">
+        <div class="fact-title">{{ fact.title }}</div>
+        <div class="fact-desc">{{ fact.desc }}</div>
+      </div>
+      {% endfor %}
+    </div>
   </div>
 
   <div class="footer">
