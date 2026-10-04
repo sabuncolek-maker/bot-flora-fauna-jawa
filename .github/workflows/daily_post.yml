@@ -1,0 +1,31 @@
+name: Auto Post Flora Fauna Jawa
+
+on:
+  schedule:
+    # Berjalan tiap hari jam 08.00 WIB (sama dengan jam 01.00 UTC)
+    - cron: '0 1 * * *'
+  workflow_dispatch: # Mengaktifkan tombol "Run workflow" untuk uji coba manual kapan saja
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ambil Kode dari Repositori
+        uses: actions/checkout@v4
+
+      - name: Pasang Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Pasang Library dan Browser
+        run: |
+          pip install -r requirements.txt
+          playwright install --with-deps chromium
+
+      - name: Jalankan AI Agent dan Upload ke FB
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+          FB_PAGE_ACCESS_TOKEN: ${{ secrets.FB_PAGE_ACCESS_TOKEN }}
+        run: python generate_and_post.py
