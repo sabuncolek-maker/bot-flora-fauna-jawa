@@ -31,11 +31,14 @@ jobs:
           FB_PAGE_ACCESS_TOKEN: ${{ secrets.FB_PAGE_ACCESS_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python generate_and_post.py
-
-      - name: Simpan Catatan Riwayat ke GitHub
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add posted.txt
-          git diff --quiet && git diff --staged --quiet || (git commit -m "chore: perbarui riwayat postingan [skip ci]" && git push)
+          cd post_infografis
+          python generate_and_post.py
+
+      - name: Simpan Riwayat Spesies
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add post_infografis/posted.txt
+          git commit -m "Update riwayat spesies harian" || exit 0
+          git push
