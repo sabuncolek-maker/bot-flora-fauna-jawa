@@ -42,38 +42,64 @@ if not remaining_species:
 selected_latin = random.choice(remaining_species)
 print(f"Target spesies hari ini: {selected_latin}")
 
-# 3. Pengambilan Citra Wikipedia dengan Filter Peta
-def fetch_wikipedia_image(latin_name):
+# ==========================================
+# 3. Ambil Foto (Wikipedia -> iNaturalist -> Cadangan)
+# ==========================================
+def fetch_inaturalist_image(latin_name):
+    """Mencari foto observasi satwa liar asli dari API iNaturalist"""
+    try:
+        url = f"https://api.inaturalist.org/v1/taxa?q={requests.utils.quote(latin_name)}&locale=id"
+        r = requests.get(url, timeout=10)
+        if r.status_code == 200:
+            res_data = r.json()
+            results = res_data.get("results", [])
+            if results:
+                default_photo = results[0].get("default_photo")
+                if default_photo and "medium_url" in default_photo:
+                    # Mengambil foto resolusi lebih tajam (large)
+                    img_url = default_photo["medium_url"].replace("medium", "large")
+                    print(f"-> Foto berhasil diambil dari iNaturalist!")
+                    return img_url
+    except Exception as e:
+        print(f"Gagal mengambil dari iNaturalist: {e}")
+    return None
+
+def fetch_species_image(latin_name):
+    """Pencarian foto bertingkat: Wikipedia -> iNaturalist -> Unsplash"""
     headers = {"User-Agent": "FaunaBot/1.0 (contact@indobizarre.local)"}
-    # Gambar cadangan bernuansa alam jika Wikipedia tidak punya foto asli
     cadangan = "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1080"
     
+    # 1. Coba ambil dari Wikipedia
     try:
         url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{requests.utils.quote(latin_name)}"
         r = requests.get(url, headers=headers, timeout=10)
         if r.status_code == 200:
             res_data = r.json()
             img_url = ""
-            
             if "originalimage" in res_data:
                 img_url = res_data["originalimage"]["source"]
             elif "thumbnail" in res_data:
                 img_url = res_data["thumbnail"]["source"]
 
-            # Filter: Cek apakah gambar yang didapat adalah peta atau file vektor
+            # Filter deteksi peta / grafik vektor
             if img_url:
                 url_kecil = img_url.lower()
                 kata_terlarang = ["map", "range", "distribution", "sebaran", ".svg"]
-                
-                # Jika ada indikasi peta, buang dan gunakan cadangan
-                if any(kata in url_kecil for kata in kata_terlarang):
-                    print(f"Gambar Wikipedia terdeteksi peta/diagram, beralih ke cadangan.")
-                    return cadangan
-                
-                return img_url
+                if not any(kata in url_kecil for kata in kata_terlarang):
+                    print(f"-> Foto berhasil diambil dari Wikipedia!")
+                    return img_url
+                else:
+                    print(f"Foto Wikipedia terdeteksi peta, beralih ke iNaturalist...")
     except Exception as e:
-        print(f"Gagal mengambil gambar: {e}")
-        
+        print(f"Gagal memproses Wikipedia: {e}")
+
+    # 2. Jika Wikipedia berupa peta atau kosong, coba cari di iNaturalist
+    inat_img = fetch_inaturalist_image(latin_name)
+    if inat_img:
+        return inat_img
+
+    # 3. Jika keduanya nihil, pakai cadangan alam Unsplash
+    print("Foto spesifik tidak ditemukan, memakai foto cadangan alam.")
     return cadangan
 
 # ==========================================
@@ -143,7 +169,7 @@ print(f"-> Terpilih: {data['name']} ({data['latin_name']})")
 # 5. Pasang Data ke Desain HTML lalu Ubah ke Gambar PNG
 # ==========================================
 print("[2/4] Mengambil foto Wikipedia...")
-data['image_url'] = fetch_wikipedia_image(selected_latin)
+data['image_url'] = fetch_species_image(selected_latin)
 
 print("[3/4] Merender gambar infografis...")
 with open("template.html", "r", encoding="utf-8") as f:
