@@ -120,6 +120,77 @@ def send_telegram_alert(pesan):
         print(f"Gagal mengirim notifikasi Telegram: {e}")
 
 # ==========================================
+# Fungsi Posting ke Instagram (Two-Step Publish)
+# ==========================================
+def post_to_instagram(fb_photo_id, caption):
+    """
+    Mengunggah foto ke Instagram:
+    1. Ambil Instagram Account ID yang tertaut di Facebook Page.
+    2. Ambil URL publik foto dari Facebook CDN.
+    3. Buat Container ID (wadah penampung media sementara).
+    4. Terbitkan kontainer ke feed Instagram.
+    """
+    try:
+        # 1. Deteksi otomatis Akun Instagram Bisnis
+        url_page = f"https://graph.facebook.com/v21.0/{FB_PAGE_ID}?fields=instagram_business_account&access_token={FB_ACCESS_TOKEN}"
+        r_page = requests.get(url_page, timeout=10).json()
+        ig_account = r_page.get("instagram_business_account")
+        
+        if not ig_account:
+            print("Peringatan: Tidak ditemukan akun Instagram Bisnis yang tertaut ke Halaman Facebook ini.")
+            return None
+        
+        ig_user_id = ig_account["id"]
+
+        # 2. Ambil link gambar dari Facebook yang baru saja diunggah
+        url_photo = f"https://graph.facebook.com/v21.0/{fb_photo_id}?fields=images&access_token={FB_ACCESS_TOKEN}"
+        r_photo = requests.get(url_photo, timeout=10).json()
+        images = r_photo.get("images", [])
+        if not images:
+            print("Gagal mengambil tautan gambar dari server Facebook.")
+            return None
+        
+        image_url_public = images[0]["source"]
+
+        # 3. Tahap 1: Buat Media Container
+        url_container = f"https://graph.facebook.com/v21.0/{ig_user_id}/media"
+        payload_container = {
+            "image_url": image_url_public,
+            "caption": caption,
+            "access_token": FB_ACCESS_TOKEN
+        }
+        res_container = requests.post(url_container, data=payload_container, timeout=15).json()
+        creation_id = res_container.get("id")
+
+        if not creation_id:
+            print(f"Gagal membuat container Instagram: {res_container}")
+            return None
+
+        # Beri jeda 5 detik agar server Meta selesai memproses gambar
+        print("Menunggu sinkronisasi media Instagram...")
+        time.sleep(5)
+
+        # 4. Tahap 2: Publikasikan ke Feed
+        url_publish = f"https://graph.facebook.com/v21.0/{ig_user_id}/media_publish"
+        payload_publish = {
+            "creation_id": creation_id,
+            "access_token": FB_ACCESS_TOKEN
+        }
+        res_publish = requests.post(url_publish, data=payload_publish, timeout=15).json()
+        ig_post_id = res_publish.get("id")
+
+        if ig_post_id:
+            print(f"SUKSES TAYANG DI INSTAGRAM! ID: {ig_post_id}")
+            return ig_post_id
+        else:
+            print(f"Gagal menerbitkan di Instagram: {res_publish}")
+            return None
+
+    except Exception as e:
+        print(f"Kendala saat proses kirim ke Instagram: {e}")
+        return None
+
+# ==========================================
 # 4. Riset Konten Lewat Groq
 # ==========================================
 client = Groq(api_key=GROQ_KEY)
@@ -227,7 +298,11 @@ res_json = res.json()
 # Evaluasi respons API: Mengirim laporan ke Telegram berdasarkan status berhasil atau gagal
 if "id" in res_json:
     post_id = res_json['id']
-    print(f"SUKSES TAYANG! Post ID: {post_id}")
+    print(f"SUKSES TAYANG DI FACEBOOK! Post ID: {post_id}")
+    
+    # Kirim otomatis ke Instagram
+    print("Mengirim konten ke Instagram...")
+    ig_post_id = post_to_instagram(post_id, data["fb_caption"])
     
     # Catat nama spesies ini ke daftar agar tidak di-post ulang besok
     posted_species.append(selected_latin)
@@ -236,16 +311,17 @@ if "id" in res_json:
             f.write(f"{s}\n")
             
     # Laporan sukses ke Telegram
+    status_ig_text = f"✅ `{ig_post_id}`" if ig_post_id else "⚠️ Lewat / Gagal"
     laporan = (
-        f"✅ *Postingan Facebook Berhasil!*\n\n"
+        f"✅ *Konten Berhasil Dipublikasikan!*\n\n"
         f"📌 *Spesies:* {data['name']} (`{selected_latin}`)\n"
         f"🛡️ *Status:* {data.get('iucn_status', '-')}\n"
-        f"🆔 *Post ID:* `{post_id}`"
+        f"📘 *Facebook:* `{post_id}`\n"
+        f"📸 *Instagram:* {status_ig_text}"
     )
     send_telegram_alert(laporan)
 else:
     print(f"GAGAL UPLOAD: {res_json}")
-    # Laporan gagal ke Telegram
-    laporan_gagal = f"❌ *Postingan Gagal Diunggah!*\n\nTarget: `{selected_latin}`\nError: `{res_json}`"
+    laporan_gagal = f"❌ *Postingan Facebook Gagal Diunggah!*\n\nTarget: `{selected_latin}`\nError: `{res_json}`"
     send_telegram_alert(laporan_gagal)
     exit(1)
