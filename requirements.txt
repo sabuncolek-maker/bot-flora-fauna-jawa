@@ -1,4 +1,4 @@
-google-genai
+groq
 playwright
 requests
 jinja2
