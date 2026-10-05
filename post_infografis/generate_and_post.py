@@ -104,6 +104,54 @@ def fetch_species_image(latin_name):
     print("Foto spesifik tidak ditemukan, memakai foto cadangan alam.")
     return cadangan
 
+# ==========================================
+# Fungsi Koleksi Spesies Otomatis dari GBIF API
+# ==========================================
+def get_species_from_gbif(posted_list):
+    """
+    Mengambil nama ilmiah flora/fauna liar di koordinat Pulau Jawa
+    dengan status terancam punah (CR, EN, VU) langsung dari basis data GBIF.
+    """
+    try:
+        # Poligon area Pulau Jawa dalam format WKT (Well-Known Text, teks standar batas koordinat peta)
+        polygon_jawa = "POLYGON((105.1 -5.8, 114.6 -5.8, 114.6 -8.8, 105.1 -8.8, 105.1 -5.8))"
+        
+        # Gunakan offset acak (lompatan halaman) agar hasil yang ditarik selalu berganti setiap hari
+        offset_acak = random.randint(0, 150)
+        
+        url_gbif = "https://api.gbif.org/v1/occurrence/search"
+        params = {
+            "country": "ID",
+            "geometry": polygon_jawa,
+            "iucnRedListCategory": ["CR", "EN", "VU"], # Kritis, Genting, Rentan
+            "hasCoordinate": "true",
+            "limit": 50,
+            "offset": offset_acak
+        }
+        
+        res = requests.get(url_gbif, params=params, timeout=15)
+        data = res.json()
+        results = data.get("results", [])
+        
+        # Kumpulkan nama spesies ilmiah yang valid dan belum pernah diposting
+        kandidat = []
+        for item in results:
+            nama = item.get("species")
+            if nama and (nama not in posted_list) and (nama not in kandidat):
+                kandidat.append(nama)
+                
+        if kandidat:
+            terpilih = random.choice(kandidat)
+            print(f"[GBIF] Spesies liar Jawa ditemukan otomatis: {terpilih}")
+            return terpilih
+        else:
+            print("[GBIF] Tidak ada spesies baru di halaman ini, beralih ke cadangan lokal.")
+            return None
+
+    except Exception as e:
+        print(f"[GBIF] Kendala koneksi ke server GBIF: {e}")
+        return None
+
 def send_telegram_alert(pesan):
     """Mengirim pesan ringkas ke aplikasi Telegram"""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
