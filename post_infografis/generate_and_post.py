@@ -10,7 +10,6 @@ from groq import Groq
 # ==========================================
 # 1. Cek Kunci Rahasia (Environment Variables)
 # ==========================================
-# Pakai .strip() untuk membuang spasi atau enter yang tidak sengaja terbawa
 GROQ_KEY = str(os.environ.get("GROQ_API_KEY") or "").strip()
 FB_PAGE_ID = str(os.environ.get("FB_PAGE_ID") or "").strip()
 FB_ACCESS_TOKEN = str(os.environ.get("FB_PAGE_ACCESS_TOKEN") or "").strip()
@@ -21,91 +20,7 @@ if not GROQ_KEY or not FB_PAGE_ID or not FB_ACCESS_TOKEN:
     raise ValueError("Error: Kunci rahasia (GROQ_API_KEY, FB_PAGE_ID, FB_PAGE_ACCESS_TOKEN) belum lengkap diatur di GitHub Secrets!")
 
 # ==========================================
-# 2. Atur Riwayat & Pilih Spesies
-# ==========================================
-SPECIES_FILE = "species_list.json"
-HISTORY_FILE = "posted.txt"
-
-with open(SPECIES_FILE, "r", encoding="utf-8") as f:
-    all_species = json.load(f)
-
-posted_species = []
-if os.path.exists(HISTORY_FILE):
-    with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-        posted_species = [line.strip() for line in f if line.strip()]
-
-# Jika semua spesies sudah diposting, ulang dari awal
-remaining_species = [s for s in all_species if s not in posted_species]
-if not remaining_species:
-    print("Semua spesies sudah pernah diunggah. Mengulang putaran daftar dari awal...")
-    posted_species = []
-    remaining_species = all_species[:]
-
-selected_latin = random.choice(remaining_species)
-print(f"Target spesies hari ini: {selected_latin}")
-
-# ==========================================
-# 3. Ambil Foto (Wikipedia -> iNaturalist -> Cadangan)
-# ==========================================
-def fetch_inaturalist_image(latin_name):
-    """Mencari foto observasi satwa liar asli dari API iNaturalist"""
-    try:
-        url = f"https://api.inaturalist.org/v1/taxa?q={requests.utils.quote(latin_name)}&locale=id"
-        r = requests.get(url, timeout=10)
-        if r.status_code == 200:
-            res_data = r.json()
-            results = res_data.get("results", [])
-            if results:
-                default_photo = results[0].get("default_photo")
-                if default_photo and "medium_url" in default_photo:
-                    # Mengambil foto resolusi lebih tajam (large)
-                    img_url = default_photo["medium_url"].replace("medium", "large")
-                    print(f"-> Foto berhasil diambil dari iNaturalist!")
-                    return img_url
-    except Exception as e:
-        print(f"Gagal mengambil dari iNaturalist: {e}")
-    return None
-
-def fetch_species_image(latin_name):
-    """Pencarian foto bertingkat: Wikipedia -> iNaturalist -> Unsplash"""
-    headers = {"User-Agent": "FaunaBot/1.0 (contact@indobizarre.local)"}
-    cadangan = "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1080"
-    
-    # 1. Coba ambil dari Wikipedia
-    try:
-        url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{requests.utils.quote(latin_name)}"
-        r = requests.get(url, headers=headers, timeout=10)
-        if r.status_code == 200:
-            res_data = r.json()
-            img_url = ""
-            if "originalimage" in res_data:
-                img_url = res_data["originalimage"]["source"]
-            elif "thumbnail" in res_data:
-                img_url = res_data["thumbnail"]["source"]
-
-            # Filter deteksi peta / grafik vektor
-            if img_url:
-                url_kecil = img_url.lower()
-                kata_terlarang = ["map", "range", "distribution", "sebaran", ".svg"]
-                if not any(kata in url_kecil for kata in kata_terlarang):
-                    print(f"-> Foto berhasil diambil dari Wikipedia!")
-                    return img_url
-                else:
-                    print(f"Foto Wikipedia terdeteksi peta, beralih ke iNaturalist...")
-    except Exception as e:
-        print(f"Gagal memproses Wikipedia: {e}")
-
-    # 2. Jika Wikipedia berupa peta atau kosong, coba cari di iNaturalist
-    inat_img = fetch_inaturalist_image(latin_name)
-    if inat_img:
-        return inat_img
-
-    # 3. Jika keduanya nihil, pakai cadangan alam Unsplash
-    print("Foto spesifik tidak ditemukan, memakai foto cadangan alam.")
-    return cadangan
-
-# ==========================================
-# Fungsi Koleksi Spesies Otomatis dari GBIF API
+# 2. Fungsi Koleksi Spesies Otomatis dari GBIF API
 # ==========================================
 def get_species_from_gbif(posted_list):
     """
@@ -113,17 +28,15 @@ def get_species_from_gbif(posted_list):
     dengan status terancam punah (CR, EN, VU) langsung dari basis data GBIF.
     """
     try:
-        # Poligon area Pulau Jawa dalam format WKT (Well-Known Text, teks standar batas koordinat peta)
+        # Poligon area batas daratan Pulau Jawa dalam format WKT
         polygon_jawa = "POLYGON((105.1 -5.8, 114.6 -5.8, 114.6 -8.8, 105.1 -8.8, 105.1 -5.8))"
-        
-        # Gunakan offset acak (lompatan halaman) agar hasil yang ditarik selalu berganti setiap hari
         offset_acak = random.randint(0, 150)
         
         url_gbif = "https://api.gbif.org/v1/occurrence/search"
         params = {
             "country": "ID",
             "geometry": polygon_jawa,
-            "iucnRedListCategory": ["CR", "EN", "VU"], # Kritis, Genting, Rentan
+            "iucnRedListCategory": ["CR", "EN", "VU"],
             "hasCoordinate": "true",
             "limit": 50,
             "offset": offset_acak
@@ -133,7 +46,6 @@ def get_species_from_gbif(posted_list):
         data = res.json()
         results = data.get("results", [])
         
-        # Kumpulkan nama spesies ilmiah yang valid dan belum pernah diposting
         kandidat = []
         for item in results:
             nama = item.get("species")
@@ -152,8 +64,94 @@ def get_species_from_gbif(posted_list):
         print(f"[GBIF] Kendala koneksi ke server GBIF: {e}")
         return None
 
+# ==========================================
+# 3. Penentuan Spesies Target (GBIF -> Cadangan JSON)
+# ==========================================
+SPECIES_FILE = "species_list.json"
+HISTORY_FILE = "posted.txt"
+
+# Baca riwayat postingan
+posted_species = []
+if os.path.exists(HISTORY_FILE):
+    with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+        posted_species = [line.strip() for line in f if line.strip()]
+
+# Tahap 1: Coba ambil spesies otomatis dari server GBIF
+selected_latin = get_species_from_gbif(posted_species)
+
+# Tahap 2: Fallback (cadangan otomatis jika GBIF bermasalah atau kosong)
+if not selected_latin:
+    with open(SPECIES_FILE, "r", encoding="utf-8") as f:
+        all_species = json.load(f)
+
+    remaining_species = [s for s in all_species if s not in posted_species]
+    if not remaining_species:
+        print("Semua spesies cadangan sudah pernah diunggah. Mengulang putaran daftar dari awal...")
+        posted_species = []
+        remaining_species = all_species[:]
+
+    selected_latin = random.choice(remaining_species)
+    print(f"[CADANGAN LOKAL] Mengambil dari species_list.json: {selected_latin}")
+
+print(f"Target spesies hari ini: {selected_latin}")
+
+# ==========================================
+# 4. Fungsi Pembantu (Foto, Notifikasi, Instagram)
+# ==========================================
+def fetch_inaturalist_image(latin_name):
+    """Mencari foto observasi satwa liar asli dari API iNaturalist"""
+    try:
+        url = f"https://api.inaturalist.org/v1/taxa?q={requests.utils.quote(latin_name)}&locale=id"
+        r = requests.get(url, timeout=10)
+        if r.status_code == 200:
+            res_data = r.json()
+            results = res_data.get("results", [])
+            if results:
+                default_photo = results[0].get("default_photo")
+                if default_photo and "medium_url" in default_photo:
+                    img_url = default_photo["medium_url"].replace("medium", "large")
+                    print("-> Foto berhasil diambil dari iNaturalist!")
+                    return img_url
+    except Exception as e:
+        print(f"Gagal mengambil dari iNaturalist: {e}")
+    return None
+
+def fetch_species_image(latin_name):
+    """Pencarian foto bertingkat: Wikipedia -> iNaturalist -> Unsplash"""
+    headers = {"User-Agent": "FaunaBot/1.0 (contact@indobizarre.local)"}
+    cadangan = "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1080"
+    
+    try:
+        url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{requests.utils.quote(latin_name)}"
+        r = requests.get(url, headers=headers, timeout=10)
+        if r.status_code == 200:
+            res_data = r.json()
+            img_url = ""
+            if "originalimage" in res_data:
+                img_url = res_data["originalimage"]["source"]
+            elif "thumbnail" in res_data:
+                img_url = res_data["thumbnail"]["source"]
+
+            if img_url:
+                url_kecil = img_url.lower()
+                kata_terlarang = ["map", "range", "distribution", "sebaran", ".svg"]
+                if not any(kata in url_kecil for kata in kata_terlarang):
+                    print("-> Foto berhasil diambil dari Wikipedia!")
+                    return img_url
+                else:
+                    print("Foto Wikipedia terdeteksi peta, beralih ke iNaturalist...")
+    except Exception as e:
+        print(f"Gagal memproses Wikipedia: {e}")
+
+    inat_img = fetch_inaturalist_image(latin_name)
+    if inat_img:
+        return inat_img
+
+    print("Foto spesifik tidak ditemukan, memakai foto cadangan alam.")
+    return cadangan
+
 def send_telegram_alert(pesan):
-    """Mengirim pesan ringkas ke aplikasi Telegram"""
+    """Mengirim notifikasi status ke Telegram"""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return
     try:
@@ -167,40 +165,29 @@ def send_telegram_alert(pesan):
     except Exception as e:
         print(f"Gagal mengirim notifikasi Telegram: {e}")
 
-# ==========================================
-# Fungsi Posting ke Instagram (Two-Step Publish)
-# ==========================================
 def post_to_instagram(fb_photo_id, caption):
-    """
-    Mengunggah foto ke Instagram:
-    1. Ambil Instagram Account ID yang tertaut di Facebook Page.
-    2. Ambil URL publik foto dari Facebook CDN.
-    3. Buat Container ID (wadah penampung media sementara).
-    4. Terbitkan kontainer ke feed Instagram.
-    """
+    """Mengunggah foto ke feed Instagram via Two-Step Publish"""
     try:
-        # 1. Deteksi otomatis Akun Instagram Bisnis
         url_page = f"https://graph.facebook.com/v21.0/{FB_PAGE_ID}?fields=instagram_business_account&access_token={FB_ACCESS_TOKEN}"
         r_page = requests.get(url_page, timeout=10).json()
         ig_account = r_page.get("instagram_business_account")
         
         if not ig_account:
-            print("Peringatan: Tidak ditemukan akun Instagram Bisnis yang tertaut ke Halaman Facebook ini.")
+            print("Peringatan: Tidak ditemukan akun Instagram Bisnis yang tertaut.")
             return None
         
         ig_user_id = ig_account["id"]
 
-        # 2. Ambil link gambar dari Facebook yang baru saja diunggah
         url_photo = f"https://graph.facebook.com/v21.0/{fb_photo_id}?fields=images&access_token={FB_ACCESS_TOKEN}"
         r_photo = requests.get(url_photo, timeout=10).json()
         images = r_photo.get("images", [])
         if not images:
-            print("Gagal mengambil tautan gambar dari server Facebook.")
+            print("Gagal mengambil tautan gambar dari Facebook.")
             return None
         
         image_url_public = images[0]["source"]
 
-        # 3. Tahap 1: Buat Media Container
+        # Tahap 1: Wadah Media
         url_container = f"https://graph.facebook.com/v21.0/{ig_user_id}/media"
         payload_container = {
             "image_url": image_url_public,
@@ -214,11 +201,10 @@ def post_to_instagram(fb_photo_id, caption):
             print(f"Gagal membuat container Instagram: {res_container}")
             return None
 
-        # Beri jeda 5 detik agar server Meta selesai memproses gambar
         print("Menunggu sinkronisasi media Instagram...")
         time.sleep(5)
 
-        # 4. Tahap 2: Publikasikan ke Feed
+        # Tahap 2: Publikasi
         url_publish = f"https://graph.facebook.com/v21.0/{ig_user_id}/media_publish"
         payload_publish = {
             "creation_id": creation_id,
@@ -239,7 +225,7 @@ def post_to_instagram(fb_photo_id, caption):
         return None
 
 # ==========================================
-# 4. Riset Konten Lewat Groq
+# 5. Riset Konten Lewat Groq
 # ==========================================
 client = Groq(api_key=GROQ_KEY)
 
@@ -297,14 +283,14 @@ for attempt in range(3):
         time.sleep(3 * (attempt + 1))
 
 if not data:
-    raise RuntimeError("Gagal mengambil data dari Groq setelah 3 percobaan. Kemungkinan server Groq sedang penuh.")
+    raise RuntimeError("Gagal mengambil data dari Groq setelah 3 percobaan.")
 
 print(f"-> Terpilih: {data['name']} ({data['latin_name']})")
 
 # ==========================================
-# 5. Pasang Data ke Desain HTML lalu Ubah ke Gambar PNG
+# 6. Pasang Data ke Desain HTML lalu Render Gambar PNG
 # ==========================================
-print("[2/4] Mengambil foto Wikipedia...")
+print("[2/4] Mengambil foto...")
 data['image_url'] = fetch_species_image(selected_latin)
 
 print("[3/4] Merender gambar infografis...")
@@ -324,13 +310,12 @@ with sync_playwright() as p:
     browser.close()
 
 # ==========================================
-# 6. Kirim Postingan ke Facebook & Catat Riwayat
+# 7. Unggah Postingan ke Facebook & Catat Riwayat
 # ==========================================
 print("[4/4] Mengunggah ke Facebook...")
 
-# Memecah teks link agar kebal dari format otomatis
 bagian_1 = "https://"
-bagian_2 = "graph.facebook.com/v21.0/"
+bagian_2 = "[graph.facebook.com/v21.0/](https://graph.facebook.com/v21.0/)"
 fb_url = bagian_1 + bagian_2 + FB_PAGE_ID + "/photos"
 
 with open(image_path, "rb") as img_file:
@@ -338,27 +323,22 @@ with open(image_path, "rb") as img_file:
         "caption": data["fb_caption"], 
         "access_token": FB_ACCESS_TOKEN
     }
-    # Kirim foto dan teksnya ke server Facebook
     res = requests.post(fb_url, data=payload, files={"source": img_file})
 
 res_json = res.json()
 
-# Evaluasi respons API: Mengirim laporan ke Telegram berdasarkan status berhasil atau gagal
 if "id" in res_json:
     post_id = res_json['id']
     print(f"SUKSES TAYANG DI FACEBOOK! Post ID: {post_id}")
     
-    # Kirim otomatis ke Instagram
     print("Mengirim konten ke Instagram...")
     ig_post_id = post_to_instagram(post_id, data["fb_caption"])
     
-    # Catat nama spesies ini ke daftar agar tidak di-post ulang besok
     posted_species.append(selected_latin)
     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
         for s in posted_species:
             f.write(f"{s}\n")
             
-    # Laporan sukses ke Telegram
     status_ig_text = f"✅ `{ig_post_id}`" if ig_post_id else "⚠️ Lewat / Gagal"
     laporan = (
         f"✅ *Konten Berhasil Dipublikasikan!*\n\n"
