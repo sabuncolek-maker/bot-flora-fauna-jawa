@@ -104,6 +104,21 @@ def fetch_species_image(latin_name):
     print("Foto spesifik tidak ditemukan, memakai foto cadangan alam.")
     return cadangan
 
+def send_telegram_alert(pesan):
+    """Mengirim pesan ringkas ke aplikasi Telegram"""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return
+    try:
+        url_tg = "https://api.telegram.org/bot" + TELEGRAM_BOT_TOKEN + "/sendMessage"
+        payload = {
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": pesan,
+            "parse_mode": "Markdown"
+        }
+        requests.post(url_tg, json=payload, timeout=10)
+    except Exception as e:
+        print(f"Gagal mengirim notifikasi Telegram: {e}")
+
 # ==========================================
 # 4. Riset Konten Lewat Groq
 # ==========================================
@@ -209,13 +224,28 @@ with open(image_path, "rb") as img_file:
 
 res_json = res.json()
 
+# Evaluasi respons API: Mengirim laporan ke Telegram berdasarkan status berhasil atau gagal
 if "id" in res_json:
-    print(f"SUKSES TAYANG! Post ID: {res_json['id']}")
+    post_id = res_json['id']
+    print(f"SUKSES TAYANG! Post ID: {post_id}")
+    
     # Catat nama spesies ini ke daftar agar tidak di-post ulang besok
     posted_species.append(selected_latin)
     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
         for s in posted_species:
             f.write(f"{s}\n")
+            
+    # Laporan sukses ke Telegram
+    laporan = (
+        f"✅ *Postingan Facebook Berhasil!*\n\n"
+        f"📌 *Spesies:* {data['name']} (`{selected_latin}`)\n"
+        f"🛡️ *Status:* {data.get('iucn_status', '-')}\n"
+        f"🆔 *Post ID:* `{post_id}`"
+    )
+    send_telegram_alert(laporan)
 else:
     print(f"GAGAL UPLOAD: {res_json}")
+    # Laporan gagal ke Telegram
+    laporan_gagal = f"❌ *Postingan Gagal Diunggah!*\n\nTarget: `{selected_latin}`\nError: `{res_json}`"
+    send_telegram_alert(laporan_gagal)
     exit(1)
