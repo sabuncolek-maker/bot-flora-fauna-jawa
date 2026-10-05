@@ -81,7 +81,7 @@ def generate_english_script(scientific_name):
     Output: Return ONLY the plain English narration text, nothing else. No titles, no bullet points, no markdown.
     """
     completion = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="openai/gpt-oss-120b",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.5
     )
