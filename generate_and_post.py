@@ -14,6 +14,8 @@ from groq import Groq
 GROQ_KEY = str(os.environ.get("GROQ_API_KEY") or "").strip()
 FB_PAGE_ID = str(os.environ.get("FB_PAGE_ID") or "").strip()
 FB_ACCESS_TOKEN = str(os.environ.get("FB_PAGE_ACCESS_TOKEN") or "").strip()
+TELEGRAM_BOT_TOKEN = str(os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
+TELEGRAM_CHAT_ID = str(os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
 
 if not GROQ_KEY or not FB_PAGE_ID or not FB_ACCESS_TOKEN:
     raise ValueError("Error: Kunci rahasia (GROQ_API_KEY, FB_PAGE_ID, FB_PAGE_ACCESS_TOKEN) belum lengkap diatur di GitHub Secrets!")
