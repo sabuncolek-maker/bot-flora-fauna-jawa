@@ -2,7 +2,7 @@ name: Auto Post Flora Fauna Jawa
 
 on:
   schedule:
-    - cron: '0 1 * * *'
+    - cron: '17 1 * * *'
   workflow_dispatch:
 
 jobs:
