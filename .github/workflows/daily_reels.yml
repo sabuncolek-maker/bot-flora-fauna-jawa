@@ -2,14 +2,17 @@ name: Generate & Post Reels 30 Detik
 
 on:
   schedule:
-    # 18:00 UTC = Jam 01:00 WIB dini hari
-    - cron: '0 18 * * *'
+    # 16:30 UTC (23:30 WIB), 19:30 UTC (02:30 WIB), 22:30 UTC (05:30 WIB)
+    - cron: '30 16,19,22 * * *'
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build-and-post-reels:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 15
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -37,3 +40,10 @@ jobs:
         run: |
           cd post_reels
           python generate_reels.py
+
+      - name: Simpan Catatan Riwayat ke Repositori
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add post_reels/history_reels.json
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update riwayat satwa reels [skip ci]" && git push)
