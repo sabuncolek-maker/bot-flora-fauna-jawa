@@ -9,17 +9,27 @@
       padding: 0;
       font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     }
+    
+    /* Warna bawaan untuk Fauna (Nuansa Tanah & Cokelat Hangat) */
     body {
       width: 1080px;
       height: 1080px;
-      background: #0d1713;
-      color: #f0f4f1;
+      background: #151311;
+      color: #f5f2eb;
       display: flex;
       flex-direction: column;
       padding: 50px 60px;
-      border: 12px solid #2d5a46;
+      border: 12px solid #6e472b;
       justify-content: space-between;
     }
+    
+    /* Pengalihan warna otomatis jika kategori adalah Flora (Nuansa Hijau Hutan) */
+    body.flora {
+      background: #0d1713;
+      color: #f0f4f1;
+      border-color: #2d5a46;
+    }
+
     .header {
       display: flex;
       justify-content: space-between;
@@ -27,17 +37,40 @@
       border-bottom: 2px solid rgba(255, 255, 255, 0.15);
       padding-bottom: 18px;
     }
+    .badge-container {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
     .badge {
       display: inline-block;
-      background: #38a169;
-      color: #0b1d14;
-      font-size: 18px;
+      background: #d97706;
+      color: #1a0f05;
+      font-size: 16px;
       font-weight: 800;
       text-transform: uppercase;
-      letter-spacing: 2px;
-      padding: 5px 14px;
+      letter-spacing: 1.5px;
+      padding: 5px 12px;
       border-radius: 6px;
-      margin-bottom: 8px;
+    }
+    body.flora .badge {
+      background: #38a169;
+      color: #0b1d14;
+    }
+    .badge-iucn {
+      display: inline-block;
+      background: rgba(255, 255, 255, 0.12);
+      color: #fbbf24;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      padding: 5px 12px;
+      border-radius: 6px;
+      border: 1px solid rgba(251, 191, 36, 0.4);
+    }
+    body.flora .badge-iucn {
+      color: #86efac;
+      border-color: rgba(134, 239, 172, 0.4);
     }
     .title {
       font-size: 46px;
@@ -62,16 +95,19 @@
       flex: 1.1;
       border-radius: 16px;
       overflow: hidden;
-      border: 3px solid #2d5a46;
-      background: #1a2e24;
+      border: 3px solid #6e472b;
+      background: #231c18;
       position: relative;
+    }
+    body.flora .image-box {
+      border-color: #2d5a46;
+      background: #1a2e24;
     }
     .image-box img {
       width: 100%;
       height: 100%;
       object-fit: cover;
     }
-    /* Label kredit lisensi semi-transparan */
     .photo-credit {
       position: absolute;
       bottom: 10px;
@@ -93,15 +129,21 @@
     }
     .fact-card {
       background: rgba(255, 255, 255, 0.05);
-      border-left: 6px solid #48bb78;
+      border-left: 6px solid #d97706;
       padding: 16px 20px;
       border-radius: 0 12px 12px 0;
+    }
+    body.flora .fact-card {
+      border-left-color: #48bb78;
     }
     .fact-title {
       font-size: 20px;
       font-weight: 700;
-      color: #68d391;
+      color: #f59e0b;
       margin-bottom: 4px;
+    }
+    body.flora .fact-title {
+      color: #68d391;
     }
     .fact-desc {
       font-size: 18px;
@@ -126,14 +168,20 @@
       font-size: 22px;
       font-weight: 800;
       letter-spacing: 1px;
+      color: #d97706;
+    }
+    body.flora .brand {
       color: #48bb78;
     }
   </style>
 </head>
-<body>
+<body class="{{ category.lower() }}">
   <div class="header">
     <div>
-      <div class="badge">{{ category }} &bull; PULAU JAWA</div>
+      <div class="badge-container">
+        <div class="badge">{{ category }} &bull; PULAU JAWA</div>
+        <div class="badge-iucn">🛡️ {{ iucn_status }}</div>
+      </div>
       <div class="title">{{ name }}</div>
       <div class="latin">{{ latin_name }}</div>
     </div>
@@ -148,7 +196,7 @@
       {% for fact in facts %}
       <div class="fact-card">
         <div class="fact-title">{{ fact.title }}</div>
-        <div class="fact-desc">{{ fact.desc }}</div>
+        <div class="fact-desc">{{ facts_desc or fact.desc }}</div>
       </div>
       {% endfor %}
     </div>
