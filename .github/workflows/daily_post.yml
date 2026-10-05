@@ -1,10 +1,9 @@
 name: Auto Post Flora Fauna Jawa
 
 on:
+  workflow_dispatch:
   schedule:
-  workflow_dispatch:
     - cron: '17 1 * * *'
-  workflow_dispatch:
 
 jobs:
   run-bot:
@@ -24,8 +23,8 @@ jobs:
         run: |
           pip install -r requirements.txt
           playwright install --with-deps chromium
-          
-        - name: Jalankan Script Bot
+
+      - name: Jalankan Script Bot
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
