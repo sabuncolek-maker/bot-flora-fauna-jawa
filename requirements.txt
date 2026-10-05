@@ -2,3 +2,4 @@ groq
 playwright
 requests
 jinja2
+edge-tts
