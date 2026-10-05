@@ -3,7 +3,12 @@ name: Auto Post Flora Fauna Jawa
 on:
   workflow_dispatch:
   schedule:
-    - cron: '17 1 * * *'
+    # 07:00 WIB (00:00 UTC) - Waktu sarapan
+    - cron: '0 0 * * *'
+    # 12:30 WIB (05:30 UTC) - Istirahat makan siang
+    - cron: '30 5 * * *'
+    # 19:30 WIB (12:30 UTC) - Jam santai malam
+    - cron: '30 12 * * *'
 
 jobs:
   run-bot:
@@ -51,5 +56,6 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add post_infografis/posted.txt
-          git commit -m "Update riwayat spesies harian" || exit 0
+          # [skip ci] mencegah server memicu tugas berulang saat file riwayat disimpan
+          git commit -m "Update riwayat spesies harian [skip ci]" || exit 0
           git push
