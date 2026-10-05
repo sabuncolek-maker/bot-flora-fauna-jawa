@@ -19,9 +19,8 @@ FILE_SRT = os.path.join(BASE_DIR, "narasi.srt")
 FILE_FINAL = os.path.join(BASE_DIR, "reels_30detik.mp4")
 
 GROQ_KEY = str(os.environ.get("GROQ_API_KEY") or "").strip()
-FB_TOKEN = str(os.environ.get("FB_ACCESS_TOKEN") or "").strip()
+FB_TOKEN = str(os.environ.get("FB_PAGE_ACCESS_TOKEN") or "").strip()
 FB_PAGE_ID = str(os.environ.get("FB_PAGE_ID") or "").strip()
-IG_USER_ID = str(os.environ.get("INSTAGRAM_ACCOUNT_ID") or "").strip()
 TELEGRAM_TOKEN = str(os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
 TELEGRAM_CHAT_ID = str(os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
 
@@ -36,7 +35,6 @@ HEADERS_BROWSER = {
 # 1. Target Spesies Liar Jawa (GBIF API)
 # ==========================================
 def get_species_target():
-    """Mengambil spesies liar endemik/terancam di Pulau Jawa dari GBIF"""
     try:
         polygon_jawa = "POLYGON((105.1 -5.8, 114.6 -5.8, 114.6 -8.8, 105.1 -8.8, 105.1 -5.8))"
         url = "https://api.gbif.org/v1/occurrence/search"
@@ -61,10 +59,7 @@ def get_species_target():
 # 2. Ambil Foto Alam Liar (Prioritas iNaturalist)
 # ==========================================
 def download_3_photos(scientific_name):
-    """Mengunduh 3 foto lapangan asli beresolusi tinggi"""
     urls = []
-    
-    # 1. Foto observasi lapangan dari iNaturalist
     try:
         url_inat = f"https://api.inaturalist.org/v1/observations?taxon_name={requests.utils.quote(scientific_name)}&has[]=photos&quality_grade=research&per_page=10"
         res_inat = requests.get(url_inat, headers=HEADERS_BROWSER, timeout=10).json()
@@ -80,7 +75,6 @@ def download_3_photos(scientific_name):
     except Exception as e:
         print(f"Kendala iNaturalist: {e}")
 
-    # 2. Lengkapi dari Wikipedia jika foto lapangan kurang
     if len(urls) < 3:
         try:
             url_wiki = f"https://en.wikipedia.org/api/rest_v1/page/summary/{requests.utils.quote(scientific_name)}"
@@ -93,7 +87,6 @@ def download_3_photos(scientific_name):
         except Exception:
             pass
 
-    # 3. Foto cadangan alam liar
     cadangan = [
         "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1080",
         "https://images.unsplash.com/photo-1448375240586-882707db888b?w=1080",
@@ -128,7 +121,6 @@ def download_3_photos(scientific_name):
 # 3. Riset Naskah Narasi (Groq AI)
 # ==========================================
 def generate_english_script(scientific_name):
-    """Menyusun naskah dokumenter pas 30 detik (60-65 kata)"""
     client = Groq(api_key=GROQ_KEY)
     prompt = f"""
     Write a dramatic wildlife documentary narration about '{scientific_name}' from Java Island.
@@ -146,10 +138,9 @@ def generate_english_script(scientific_name):
     return naskah
 
 # ==========================================
-# 4. Audio Narasi & Generator Subtitle Per Kalimat
+# 4. Audio Narasi & Subtitle Per Kalimat
 # ==========================================
 def format_srt_time(seconds):
-    """Mengubah detik ke format standar SubRip (jam:menit:detik,milidetik)"""
     millis = int((seconds - int(seconds)) * 1000)
     secs = int(seconds) % 60
     mins = int(seconds // 60) % 60
@@ -157,7 +148,6 @@ def format_srt_time(seconds):
     return f"{hours:02d}:{mins:02d}:{secs:02d},{millis:03d}"
 
 async def create_audio_and_clean_subtitles(text):
-    """Membuat rekaman suara Edge-TTS dan file narasi.srt per kalimat"""
     voice = "en-US-ChristopherNeural"
     tts = edge_tts.Communicate(text, voice)
     await tts.save(FILE_AUDIO)
@@ -188,26 +178,22 @@ async def create_audio_and_clean_subtitles(text):
 
     with open(FILE_SRT, "w", encoding="utf-8") as f_sub:
         f_sub.write("\n".join(srt_lines))
-    print("Audio MP3 dan berkas Subtitle SRT selesai dibuat!")
+    print("Audio MP3 dan Subtitle SRT selesai dibuat!")
 
 # ==========================================
-# 5. Render Video 3 Foto & Hardsub Rapi (FFmpeg)
+# 5. Render Video 3 Foto & Subtitle
 # ==========================================
 def render_multi_photo_reels(photo_files):
-    """Merender 3 foto bergantian dengan latar kanvas blur dan subtitle presisi"""
     clip_files = []
     
     for idx, photo in enumerate(photo_files, start=1):
         clip_output = os.path.join(BASE_DIR, f"clip_{idx}.mp4")
-        print(f"Merender Klip {idx} (durasi 10 detik)...")
-        
         filter_str = (
             "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=25:5[bg];"
             "[0:v]scale=1080:1920:force_original_aspect_ratio=decrease[fg];"
             "[bg][fg]overlay=(W-w)/2:(H-h)/2,"
             "zoompan=z='min(zoom+0.0006,1.08)':d=250:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=25"
         )
-        
         cmd_clip = [
             "ffmpeg", "-y",
             "-loop", "1",
@@ -226,7 +212,6 @@ def render_multi_photo_reels(photo_files):
         for c in clip_files:
             f.write(f"file '{c}'\n")
 
-    print("Menggabungkan seluruh klip dan mencetak subtitle...")
     sub_filter = (
         "subtitles=narasi.srt:force_style='Alignment=2\\,"
         "FontSize=8\\,"
@@ -259,12 +244,9 @@ def render_multi_photo_reels(photo_files):
 # 6. Distribusi Telegram Bot
 # ==========================================
 def send_to_telegram(video_path, caption_text):
-    """Mengirim video hasil render ke Telegram pribadi sebagai bukti tayang"""
     if not (TELEGRAM_TOKEN and TELEGRAM_CHAT_ID):
-        print("Kredensial Telegram belum diatur, lewati pengiriman Telegram.")
         return
     try:
-        print("Mengirim video arsip ke Telegram...")
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendVideo"
         with open(video_path, "rb") as f:
             requests.post(
@@ -278,22 +260,35 @@ def send_to_telegram(video_path, caption_text):
         print(f"Gagal mengirim ke Telegram: {e}")
 
 # ==========================================
-# 7. Publikasi Instagram Reels (Meta Graph API)
+# 7. Ambil ID Akun Instagram Otomatis
 # ==========================================
-def post_instagram_reels(video_path, caption_text):
-    """Mengunggah video reels langsung ke Instagram via Resumable Upload"""
-    if not (FB_TOKEN and IG_USER_ID):
-        print("Kredensial Instagram belum lengkap, lewati posting Instagram.")
+def get_instagram_id():
+    """Mendeteksi ID Instagram Business otomatis dari Facebook Page ID"""
+    try:
+        url = f"https://graph.facebook.com/v19.0/{FB_PAGE_ID}?fields=instagram_business_account&access_token={FB_TOKEN}"
+        res = requests.get(url, timeout=10).json()
+        ig_id = res.get("instagram_business_account", {}).get("id")
+        return ig_id
+    except Exception as e:
+        print(f"Kendala mencari Instagram ID: {e}")
+        return None
+
+# ==========================================
+# 8. Publikasi Instagram Reels
+# ==========================================
+def post_instagram_reels(video_path, caption_text, ig_id):
+    if not ig_id:
+        print("ID Instagram tidak ditemukan dari Page FB. Melewati posting Instagram.")
         return
 
     try:
-        print("Menginisialisasi sesi Reels di Meta Graph API...")
-        # Inisialisasi wadah video
-        init_url = f"https://graph.facebook.com/v19.0/{IG_USER_ID}/media"
+        print(f"Menginisialisasi Instagram Reels (IG ID: {ig_id})...")
+        init_url = f"https://graph.facebook.com/v19.0/{ig_id}/media"
         init_params = {
             "media_type": "REELS",
             "upload_type": "resumable",
             "caption": caption_text,
+            "share_to_feed": "true",
             "access_token": FB_TOKEN
         }
         r_init = requests.post(init_url, data=init_params, timeout=20).json()
@@ -301,11 +296,9 @@ def post_instagram_reels(video_path, caption_text):
         upload_uri = r_init.get("uri")
 
         if not upload_uri:
-            print(f"Gagal membuka sesi Reels: {r_init}")
+            print(f"Gagal inisialisasi IG Reels: {r_init}")
             return
 
-        # Unggah biner video langsung ke server Meta
-        print("Mengunggah berkas video ke Meta CDN...")
         with open(video_path, "rb") as f:
             video_data = f.read()
 
@@ -316,28 +309,65 @@ def post_instagram_reels(video_path, caption_text):
         }
         requests.post(upload_uri, headers=headers, data=video_data, timeout=120)
 
-        # Polling status pemrosesan video di server Meta
-        print("Menunggu server Meta memproses video...")
+        print("Menunggu proses pemrosesan video Instagram...")
         status_url = f"https://graph.facebook.com/v19.0/{video_id}?fields=status_code&access_token={FB_TOKEN}"
         for _ in range(12):
             time.sleep(10)
             status_res = requests.get(status_url, timeout=10).json()
-            kode_status = status_res.get("status_code")
-            print(f"Status pemrosesan Meta: {kode_status}")
-            if kode_status == "FINISHED":
+            if status_res.get("status_code") == "FINISHED":
                 break
-            elif kode_status == "ERROR":
-                print("Server Meta gagal memproses video.")
-                return
 
-        # Terbitkan video ke publik
-        print("Menerbitkan video ke feed Instagram...")
-        pub_url = f"https://graph.facebook.com/v19.0/{IG_USER_ID}/media_publish"
+        pub_url = f"https://graph.facebook.com/v19.0/{ig_id}/media_publish"
         pub_res = requests.post(pub_url, data={"creation_id": video_id, "access_token": FB_TOKEN}, timeout=20).json()
-        print("-> SUKSES! Instagram Reels resmi tayang. ID Konten:", pub_res.get("id"))
-
+        print("-> SUKSES! Instagram Reels terbit. ID:", pub_res.get("id"))
     except Exception as e:
         print(f"Kendala saat posting Instagram Reels: {e}")
+
+# ==========================================
+# 9. Publikasi Facebook Reels
+# ==========================================
+def post_facebook_reels(video_path, caption_text):
+    if not (FB_TOKEN and FB_PAGE_ID):
+        print("Kredensial Facebook belum lengkap, lewati posting FB.")
+        return
+
+    try:
+        print("Menginisialisasi Facebook Reels...")
+        init_url = f"https://graph.facebook.com/v19.0/{FB_PAGE_ID}/video_reels"
+        r_init = requests.post(init_url, data={"upload_phase": "start", "access_token": FB_TOKEN}, timeout=20).json()
+        video_id = r_init.get("video_id")
+        upload_url = r_init.get("upload_url")
+
+        if not upload_url:
+            print(f"Gagal inisialisasi FB Reels: {r_init}")
+            return
+
+        with open(video_path, "rb") as f:
+            video_data = f.read()
+
+        headers = {
+            "Authorization": f"OAuth {FB_TOKEN}",
+            "offset": "0",
+            "file_size": str(len(video_data))
+        }
+        requests.post(upload_url, headers=headers, data=video_data, timeout=120)
+
+        print("Menerbitkan Facebook Reels ke Halaman...")
+        publish_url = f"https://graph.facebook.com/v19.0/{FB_PAGE_ID}/video_reels"
+        pub_params = {
+            "upload_phase": "finish",
+            "access_token": FB_TOKEN,
+            "video_id": video_id,
+            "video_state": "PUBLISHED",
+            "description": caption_text
+        }
+        r_pub = requests.post(publish_url, data=pub_params, timeout=20).json()
+        if r_pub.get("success"):
+            print("-> SUKSES! Facebook Reels terbit di Halaman FB!")
+        else:
+            print(f"Respon penerbitan FB Reels: {r_pub}")
+    except Exception as e:
+        print(f"Kendala saat posting Facebook Reels: {e}")
 
 # ==========================================
 # Alur Eksekusi Utama
@@ -351,16 +381,24 @@ def main():
     asyncio.run(create_audio_and_clean_subtitles(naskah))
     render_multi_photo_reels(photos)
 
-    # Naskah takarir (caption) bahasa Inggris untuk target audiens luar negeri
     caption = (
         f"The hidden wildlife of Java: {target}.\n\n"
         f"{naskah}\n\n"
         f"#wildlife #indonesia #nature #documentary #indobizarre #javanwildlife #biodiversity"
     )
 
-    # Distribusi otomatis serentak
+    # 1. Kirim ke Telegram
     send_to_telegram(FILE_FINAL, caption)
-    post_instagram_reels(FILE_FINAL, caption)
+
+    # 2. Kirim ke Facebook Reels
+    post_facebook_reels(FILE_FINAL, caption)
+
+    # 3. Cari ID Instagram secara otomatis & Terbitkan
+    ig_id = get_instagram_id()
+    if ig_id:
+        post_instagram_reels(FILE_FINAL, caption, ig_id)
+    else:
+        print("Halaman Facebook belum terhubung ke Akun Bisnis Instagram.")
 
 if __name__ == "__main__":
     main()
