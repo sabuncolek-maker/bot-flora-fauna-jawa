@@ -152,8 +152,13 @@ async def generate_voiceover_and_subtitles(text):
                 submaker.feed(chunk)
 
     # Simpan naskah berwaktu ke format standar SubRip (.srt)
+    srt_content = submaker.get_srt()
+    if not srt_content.strip():
+        # Fallback jika deteksi kata kosong: buat subtitle standar penuh durasi
+        srt_content = f"1\n00:00:00,000 --> 00:00:29,000\n{text}\n"
+
     with open(FILE_SRT, "w", encoding="utf-8") as f_sub:
-        f_sub.write(submaker.get_srt())
+        f_sub.write(srt_content)
 
     print("Audio dan berkas subtitle SRT berhasil dibuat!")
 
@@ -186,7 +191,7 @@ def render_multi_photo_reels(photo_files):
             "-pix_fmt", "yuv420p",
             clip_output
         ]
-        subprocess.run(cmd_clip, check=True)
+        subprocess.run(cmd_clip, check=True, cwd=BASE_DIR)
         clip_files.append(clip_output)
 
     # 2. Siapkan daftar penggabungan video
@@ -198,16 +203,16 @@ def render_multi_photo_reels(photo_files):
     # 3. Gabungkan klip, pasang audio, dan tempel subtitle
     print("Menggabungkan klip dan menempelkan teks subtitle...")
     
-    # Nama file relatif agar tidak terbentur tanda titik dua path Linux di FFmpeg
-    srt_filename = os.path.basename(FILE_SRT)
-    
-    # Penataan gaya subtitle:
-    # - Alignment=2: Posisi bawah tengah
-    # - MarginV=140: Jarak aman dari bawah agar tidak tertutup tombol 'Like/Share' Reels
-    # - BorderStyle=1, Outline=2: Huruf putih tebal dengan garis tepi hitam tegas
+    # Koma dilindungi dengan \\, agar tidak dianggap pemisah filter oleh FFmpeg
     sub_filter = (
-        f"subtitles={srt_filename}:force_style='Alignment=2,FontSize=18,Bold=1,"
-        f"PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,MarginV=140'"
+        "subtitles=narasi.srt:force_style='Alignment=2\\,"
+        "FontSize=22\\,"
+        "Bold=1\\,"
+        "PrimaryColour=&H00FFFFFF\\,"
+        "OutlineColour=&H00000000\\,"
+        "BorderStyle=1\\,"
+        "Outline=2\\,"
+        "MarginV=140'"
     )
 
     cmd_merge = [
@@ -224,7 +229,8 @@ def render_multi_photo_reels(photo_files):
         "-shortest",
         FILE_FINAL
     ]
-    subprocess.run(cmd_merge, check=True)
+    # cwd=BASE_DIR memastikan FFmpeg mencari file narasi.srt tepat di folder post_reels
+    subprocess.run(cmd_merge, check=True, cwd=BASE_DIR)
     print("Video Reels 30 detik + Subtitle selesai dibuat:", FILE_FINAL)
 
 # ==========================================
