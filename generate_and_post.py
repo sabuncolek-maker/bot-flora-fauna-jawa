@@ -42,24 +42,39 @@ if not remaining_species:
 selected_latin = random.choice(remaining_species)
 print(f"Target spesies hari ini: {selected_latin}")
 
-# ==========================================
-# 3. Ambil Foto dari Wikipedia
-# ==========================================
+# 3. Pengambilan Citra Wikipedia dengan Filter Peta
 def fetch_wikipedia_image(latin_name):
     headers = {"User-Agent": "FaunaBot/1.0 (contact@indobizarre.local)"}
+    # Gambar cadangan bernuansa alam jika Wikipedia tidak punya foto asli
+    cadangan = "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1080"
+    
     try:
         url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{requests.utils.quote(latin_name)}"
         r = requests.get(url, headers=headers, timeout=10)
         if r.status_code == 200:
             res_data = r.json()
+            img_url = ""
+            
             if "originalimage" in res_data:
-                return res_data["originalimage"]["source"]
+                img_url = res_data["originalimage"]["source"]
             elif "thumbnail" in res_data:
-                return res_data["thumbnail"]["source"]
+                img_url = res_data["thumbnail"]["source"]
+
+            # Filter: Cek apakah gambar yang didapat adalah peta atau file vektor
+            if img_url:
+                url_kecil = img_url.lower()
+                kata_terlarang = ["map", "range", "distribution", "sebaran", ".svg"]
+                
+                # Jika ada indikasi peta, buang dan gunakan cadangan
+                if any(kata in url_kecil for kata in kata_terlarang):
+                    print(f"Gambar Wikipedia terdeteksi peta/diagram, beralih ke cadangan.")
+                    return cadangan
+                
+                return img_url
     except Exception as e:
         print(f"Gagal mengambil gambar: {e}")
-    # Gambar cadangan jika di Wikipedia tidak ada
-    return "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1080"
+        
+    return cadangan
 
 # ==========================================
 # 4. Riset Konten Lewat Groq
