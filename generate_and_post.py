@@ -7,15 +7,20 @@ from jinja2 import Template
 from playwright.sync_api import sync_playwright
 from groq import Groq
 
+# ==========================================
 # 1. Cek Kunci Rahasia (Environment Variables)
-GROQ_KEY = os.environ.get("GROQ_API_KEY")
-FB_PAGE_ID = os.environ.get("FB_PAGE_ID")
-FB_ACCESS_TOKEN = os.environ.get("FB_PAGE_ACCESS_TOKEN")
+# ==========================================
+# Pakai .strip() untuk membuang spasi atau enter yang tidak sengaja terbawa
+GROQ_KEY = str(os.environ.get("GROQ_API_KEY") or "").strip()
+FB_PAGE_ID = str(os.environ.get("FB_PAGE_ID") or "").strip()
+FB_ACCESS_TOKEN = str(os.environ.get("FB_PAGE_ACCESS_TOKEN") or "").strip()
 
-if not all([GROQ_KEY, FB_PAGE_ID, FB_ACCESS_TOKEN]):
+if not GROQ_KEY or not FB_PAGE_ID or not FB_ACCESS_TOKEN:
     raise ValueError("Error: Kunci rahasia (GROQ_API_KEY, FB_PAGE_ID, FB_PAGE_ACCESS_TOKEN) belum lengkap diatur di GitHub Secrets!")
 
-# 2. Atur Riwayat & Pilih Spesies yang Belum Pernah Diposting
+# ==========================================
+# 2. Atur Riwayat & Pilih Spesies
+# ==========================================
 SPECIES_FILE = "species_list.json"
 HISTORY_FILE = "posted.txt"
 
@@ -27,7 +32,7 @@ if os.path.exists(HISTORY_FILE):
     with open(HISTORY_FILE, "r", encoding="utf-8") as f:
         posted_species = [line.strip() for line in f if line.strip()]
 
-# Jika semua spesies dalam daftar sudah pernah diposting, ulang dari awal
+# Jika semua spesies sudah diposting, ulang dari awal
 remaining_species = [s for s in all_species if s not in posted_species]
 if not remaining_species:
     print("Semua spesies sudah pernah diunggah. Mengulang putaran daftar dari awal...")
@@ -37,7 +42,9 @@ if not remaining_species:
 selected_latin = random.choice(remaining_species)
 print(f"Target spesies hari ini: {selected_latin}")
 
+# ==========================================
 # 3. Ambil Foto dari Wikipedia
+# ==========================================
 def fetch_wikipedia_image(latin_name):
     headers = {"User-Agent": "FaunaBot/1.0 (contact@indobizarre.local)"}
     try:
@@ -51,17 +58,18 @@ def fetch_wikipedia_image(latin_name):
                 return res_data["thumbnail"]["source"]
     except Exception as e:
         print(f"Gagal mengambil gambar: {e}")
-    # Gambar cadangan jika di Wikipedia tidak tersedia
+    # Gambar cadangan jika di Wikipedia tidak ada
     return "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1080"
 
+# ==========================================
 # 4. Riset Konten Lewat Groq
+# ==========================================
 client = Groq(api_key=GROQ_KEY)
 
-# Instruksi peran AI: Menjelaskan dengan bahasa santai, lugas, dan mudah dicerna
 system_prompt = (
     "Kamu adalah pencerita alam liar Pulau Jawa yang seru dan bersahabat. "
     "Gunakan bahasa Indonesia yang sederhana, membumi, mengalir santai, dan tidak kaku seperti buku teks formal. "
-    "Hindari istilah biologi rumit yang bikin bingung orang awam, atau jika ada istilah baru, jelaskan artinya secara singkat dan alami. "
+    "Hindari istilah biologi rumit yang bikin bingung orang awam. Jika ada istilah baru, jelaskan artinya secara singkat dan alami. "
     "Wajib berikan balasan HANYA dalam format JSON valid tanpa tanda kutip markdown (```json)."
 )
 
@@ -71,7 +79,7 @@ Tentukan apakah ini FLORA (tumbuhan) atau FAUNA (hewan), sebutkan nama lokal/pop
 
 Kaidah isi:
 1. 'facts': Buat 3 fakta unik yang ceritanya enak dibaca orang biasa. Penjelasannya padat, maksimal 20 kata per fakta.
-2. 'fb_caption': Tulis naskah postingan Facebook yang ramah, enak dibaca seperti teman sedang bercerita, sisipkan emotikon yang pas, ajakan menjaga alam, dan beberapa tagar (#) yang relevan.
+2. 'fb_caption': Tulis naskah postingan Facebook yang ramah, asyik dibaca, sisipkan emotikon yang pas, ajakan menjaga alam, dan hashtag yang relevan.
 
 Ikuti format JSON persis seperti ini:
 {{
@@ -110,11 +118,13 @@ for attempt in range(3):
         time.sleep(3 * (attempt + 1))
 
 if not data:
-    raise RuntimeError("Gagal mengambil data dari Groq setelah 3 percobaan.")
+    raise RuntimeError("Gagal mengambil data dari Groq setelah 3 percobaan. Kemungkinan server Groq sedang penuh.")
 
 print(f"-> Terpilih: {data['name']} ({data['latin_name']})")
 
+# ==========================================
 # 5. Pasang Data ke Desain HTML lalu Ubah ke Gambar PNG
+# ==========================================
 print("[2/4] Mengambil foto Wikipedia...")
 data['image_url'] = fetch_wikipedia_image(selected_latin)
 
@@ -134,16 +144,27 @@ with sync_playwright() as p:
     page.screenshot(path=image_path)
     browser.close()
 
-# 6. Kirim Postingan ke Facebook & Catat di File posted.txt
+# ==========================================
+# 6. Kirim Postingan ke Facebook & Catat Riwayat
+# ==========================================
 print("[4/4] Mengunggah ke Facebook...")
-url = f"[https://graph.facebook.com/v21.0/](https://graph.facebook.com/v21.0/){FB_PAGE_ID}/photos"
+
+# Cara paling aman menggabungkan URL agar tidak jadi error "InvalidSchema"
+fb_url = "[https://graph.facebook.com/v21.0/](https://graph.facebook.com/v21.0/)" + FB_PAGE_ID + "/photos"
+
 with open(image_path, "rb") as img_file:
-    payload = {"caption": data["fb_caption"], "access_token": FB_ACCESS_TOKEN}
-    res = requests.post(url, data=payload, files={"source": img_file})
+    payload = {
+        "caption": data["fb_caption"], 
+        "access_token": FB_ACCESS_TOKEN
+    }
+    # Kirim foto dan teksnya ke server Facebook
+    res = requests.post(fb_url, data=payload, files={"source": img_file})
 
 res_json = res.json()
+
 if "id" in res_json:
     print(f"SUKSES TAYANG! Post ID: {res_json['id']}")
+    # Catat nama spesies ini ke daftar agar tidak di-post ulang besok
     posted_species.append(selected_latin)
     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
         for s in posted_species:
