@@ -17,6 +17,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FILE_AUDIO = os.path.join(BASE_DIR, "narasi.mp3")
 FILE_SRT = os.path.join(BASE_DIR, "narasi.srt")
 FILE_FINAL = os.path.join(BASE_DIR, "reels_30detik.mp4")
+FILE_HISTORY = os.path.join(BASE_DIR, "history_reels.json")
 
 GROQ_KEY = str(os.environ.get("GROQ_API_KEY") or "").strip()
 FB_TOKEN = str(os.environ.get("FB_PAGE_ACCESS_TOKEN") or "").strip()
@@ -32,10 +33,10 @@ HEADERS_BROWSER = {
 }
 
 # ==========================================
-# 1. Target Spesies Liar Jawa (GBIF API)
+# 1. Manajemen Riwayat Anti-Duplikasi
 # ==========================================
 def load_history():
-    """Membaca daftar spesies yang sudah pernah diunggah"""
+    """Membaca riwayat spesies yang sudah pernah diposting"""
     if os.path.exists(FILE_HISTORY):
         try:
             with open(FILE_HISTORY, "r", encoding="utf-8") as f:
@@ -45,7 +46,7 @@ def load_history():
     return []
 
 def save_to_history(species_name):
-    """Menyimpan spesies baru ke buku catatan riwayat (maksimal simpan 60 riwayat terakhir)"""
+    """Menyimpan spesies ke catatan riwayat agar tidak dobel"""
     history = load_history()
     if species_name not in history:
         history.append(species_name)
@@ -54,8 +55,10 @@ def save_to_history(species_name):
     with open(FILE_HISTORY, "w", encoding="utf-8") as f:
         json.dump(history, f, indent=2)
 
+# ==========================================
+# 2. Target Spesies Liar Jawa (GBIF API)
+# ==========================================
 def get_species_target():
-    """Mengambil spesies yang belum pernah diposting dalam sebulan terakhir"""
     history = load_history()
     kandidat = []
     try:
@@ -72,20 +75,25 @@ def get_species_target():
         res = requests.get(url, params=params, headers=HEADERS_BROWSER, timeout=12).json()
         results = res.get("results", [])
         semua_spesies = list(set([item.get("species") for item in results if item.get("species")]))
-        # Filter: ambil yang belum ada di catatan riwayat
         kandidat = [s for s in semua_spesies if s not in history]
     except Exception as e:
         print(f"Kendala GBIF: {e}")
 
     if kandidat:
         return random.choice(kandidat)
-    
-    cadangan = ["Panthera pardus melas", "Nisaetus bartelsi", "Presbytis comata", "Leptophryne cruentata", "Prionailurus bengalensis"]
+
+    cadangan = [
+        "Panthera pardus melas", 
+        "Nisaetus bartelsi", 
+        "Presbytis comata", 
+        "Leptophryne cruentata", 
+        "Prionailurus bengalensis"
+    ]
     sisa = [c for c in cadangan if c not in history]
     return random.choice(sisa if sisa else cadangan)
 
 # ==========================================
-# 2. Ambil Foto Alam Liar (Prioritas iNaturalist)
+# 3. Ambil 3 Foto Alam Liar (iNaturalist & Wiki)
 # ==========================================
 def download_3_photos(scientific_name):
     urls = []
@@ -143,11 +151,11 @@ def download_3_photos(scientific_name):
                 saved_files.append(file_path)
         except Exception:
             pass
-            
+
     return saved_files
 
 # ==========================================
-# 3. Riset Naskah Narasi (Groq AI)
+# 4. Naskah Narasi Dokumenter (Groq AI)
 # ==========================================
 def generate_english_script(scientific_name):
     client = Groq(api_key=GROQ_KEY)
@@ -167,7 +175,7 @@ def generate_english_script(scientific_name):
     return naskah
 
 # ==========================================
-# 4. Audio Narasi & Subtitle Per Kalimat
+# 5. Audio & Subtitle Per Kalimat (Edge-TTS)
 # ==========================================
 def format_srt_time(seconds):
     millis = int((seconds - int(seconds)) * 1000)
@@ -188,7 +196,7 @@ async def create_audio_and_clean_subtitles(text):
     total_kata = sum(len(k.split()) for k in kalimat_list)
     durasi_total = 28.0
     waktu_mulai = 0.5
-    
+
     srt_lines = []
     for i, kalimat in enumerate(kalimat_list, start=1):
         kata_kalimat = len(kalimat.split())
@@ -210,11 +218,11 @@ async def create_audio_and_clean_subtitles(text):
     print("Audio MP3 dan Subtitle SRT selesai dibuat!")
 
 # ==========================================
-# 5. Render Video 3 Foto & Subtitle
+# 6. Render Video 3 Foto & Hardsub (FFmpeg)
 # ==========================================
 def render_multi_photo_reels(photo_files):
     clip_files = []
-    
+
     for idx, photo in enumerate(photo_files, start=1):
         clip_output = os.path.join(BASE_DIR, f"clip_{idx}.mp4")
         filter_str = (
@@ -270,7 +278,7 @@ def render_multi_photo_reels(photo_files):
     print("Render final Reels sukses:", FILE_FINAL)
 
 # ==========================================
-# 6. Distribusi Telegram Bot
+# 7. Distribusi Telegram Bot
 # ==========================================
 def send_to_telegram(video_path, caption_text):
     if not (TELEGRAM_TOKEN and TELEGRAM_CHAT_ID):
@@ -289,10 +297,9 @@ def send_to_telegram(video_path, caption_text):
         print(f"Gagal mengirim ke Telegram: {e}")
 
 # ==========================================
-# 7. Ambil ID Akun Instagram Otomatis
+# 8. Deteksi ID Instagram Bisnis
 # ==========================================
 def get_instagram_id():
-    """Mendeteksi ID Instagram Business otomatis dari Facebook Page ID"""
     try:
         url = f"https://graph.facebook.com/v19.0/{FB_PAGE_ID}?fields=instagram_business_account&access_token={FB_TOKEN}"
         res = requests.get(url, timeout=10).json()
@@ -303,11 +310,11 @@ def get_instagram_id():
         return None
 
 # ==========================================
-# 8. Publikasi Instagram Reels
+# 9. Publikasi Instagram Reels
 # ==========================================
 def post_instagram_reels(video_path, caption_text, ig_id):
     if not ig_id:
-        print("ID Instagram tidak ditemukan dari Page FB. Melewati posting Instagram.")
+        print("ID Instagram tidak ditemukan. Melewati posting Instagram.")
         return
 
     try:
@@ -338,7 +345,7 @@ def post_instagram_reels(video_path, caption_text, ig_id):
         }
         requests.post(upload_uri, headers=headers, data=video_data, timeout=120)
 
-        print("Menunggu proses pemrosesan video Instagram...")
+        print("Menunggu proses render di server Meta...")
         status_url = f"https://graph.facebook.com/v19.0/{video_id}?fields=status_code&access_token={FB_TOKEN}"
         for _ in range(12):
             time.sleep(10)
@@ -350,10 +357,10 @@ def post_instagram_reels(video_path, caption_text, ig_id):
         pub_res = requests.post(pub_url, data={"creation_id": video_id, "access_token": FB_TOKEN}, timeout=20).json()
         print("-> SUKSES! Instagram Reels terbit. ID:", pub_res.get("id"))
     except Exception as e:
-        print(f"Kendala saat posting Instagram Reels: {e}")
+        print(f"Kendala posting Instagram Reels: {e}")
 
 # ==========================================
-# 9. Publikasi Facebook Reels
+# 10. Publikasi Facebook Reels
 # ==========================================
 def post_facebook_reels(video_path, caption_text):
     if not (FB_TOKEN and FB_PAGE_ID):
@@ -396,16 +403,14 @@ def post_facebook_reels(video_path, caption_text):
         else:
             print(f"Respon penerbitan FB Reels: {r_pub}")
     except Exception as e:
-        print(f"Kendala saat posting Facebook Reels: {e}")
+        print(f"Kendala posting Facebook Reels: {e}")
 
 # ==========================================
-# Alur Eksekusi Utama
+# Alur Utama
 # ==========================================
 def main():
-    # Jeda acak 1 sampai 8 menit agar jam tayang tidak terbaca sebagai mesin kaku
-    jeda_detik = random.randint(60, 480)
-    print(f"Menunggu jeda alami selama {jeda_detik} detik sebelum memproses...")
-    time.sleep(jeda_detik)
+    # Jeda acak singkat (10 detik) agar saat dites manual tidak menunggu lama
+    time.sleep(10)
 
     target = get_species_target()
     print(f"Target Spesies Reels: {target}")
@@ -423,16 +428,13 @@ def main():
 
     send_to_telegram(FILE_FINAL, caption)
     post_facebook_reels(FILE_FINAL, caption)
-    
+
     ig_id = get_instagram_id()
     if ig_id:
         post_instagram_reels(FILE_FINAL, caption, ig_id)
 
-    # Simpan ke riwayat agar tidak diunggah ulang
     save_to_history(target)
     print("Spesies resmi dicatat ke history_reels.json!")
-    else:
-        print("Halaman Facebook belum terhubung ke Akun Bisnis Instagram.")
 
 if __name__ == "__main__":
     main()
