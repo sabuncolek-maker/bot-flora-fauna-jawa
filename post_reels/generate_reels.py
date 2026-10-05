@@ -34,7 +34,30 @@ HEADERS_BROWSER = {
 # ==========================================
 # 1. Target Spesies Liar Jawa (GBIF API)
 # ==========================================
+def load_history():
+    """Membaca daftar spesies yang sudah pernah diunggah"""
+    if os.path.exists(FILE_HISTORY):
+        try:
+            with open(FILE_HISTORY, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return []
+    return []
+
+def save_to_history(species_name):
+    """Menyimpan spesies baru ke buku catatan riwayat (maksimal simpan 60 riwayat terakhir)"""
+    history = load_history()
+    if species_name not in history:
+        history.append(species_name)
+    if len(history) > 60:
+        history = history[-60:]
+    with open(FILE_HISTORY, "w", encoding="utf-8") as f:
+        json.dump(history, f, indent=2)
+
 def get_species_target():
+    """Mengambil spesies yang belum pernah diposting dalam sebulan terakhir"""
+    history = load_history()
+    kandidat = []
     try:
         polygon_jawa = "POLYGON((105.1 -5.8, 114.6 -5.8, 114.6 -8.8, 105.1 -8.8, 105.1 -5.8))"
         url = "https://api.gbif.org/v1/occurrence/search"
@@ -43,17 +66,23 @@ def get_species_target():
             "geometry": polygon_jawa,
             "iucnRedListCategory": ["CR", "EN", "VU"],
             "hasCoordinate": "true",
-            "limit": 30,
-            "offset": random.randint(0, 100)
+            "limit": 40,
+            "offset": random.randint(0, 150)
         }
         res = requests.get(url, params=params, headers=HEADERS_BROWSER, timeout=12).json()
         results = res.get("results", [])
-        kandidat = [item.get("species") for item in results if item.get("species")]
-        if kandidat:
-            return random.choice(list(set(kandidat)))
+        semua_spesies = list(set([item.get("species") for item in results if item.get("species")]))
+        # Filter: ambil yang belum ada di catatan riwayat
+        kandidat = [s for s in semua_spesies if s not in history]
     except Exception as e:
         print(f"Kendala GBIF: {e}")
-    return random.choice(["Panthera pardus melas", "Nisaetus bartelsi", "Presbytis comata"])
+
+    if kandidat:
+        return random.choice(kandidat)
+    
+    cadangan = ["Panthera pardus melas", "Nisaetus bartelsi", "Presbytis comata", "Leptophryne cruentata", "Prionailurus bengalensis"]
+    sisa = [c for c in cadangan if c not in history]
+    return random.choice(sisa if sisa else cadangan)
 
 # ==========================================
 # 2. Ambil Foto Alam Liar (Prioritas iNaturalist)
@@ -373,6 +402,11 @@ def post_facebook_reels(video_path, caption_text):
 # Alur Eksekusi Utama
 # ==========================================
 def main():
+    # Jeda acak 1 sampai 8 menit agar jam tayang tidak terbaca sebagai mesin kaku
+    jeda_detik = random.randint(60, 480)
+    print(f"Menunggu jeda alami selama {jeda_detik} detik sebelum memproses...")
+    time.sleep(jeda_detik)
+
     target = get_species_target()
     print(f"Target Spesies Reels: {target}")
 
@@ -387,16 +421,16 @@ def main():
         f"#wildlife #indonesia #nature #documentary #indobizarre #javanwildlife #biodiversity"
     )
 
-    # 1. Kirim ke Telegram
     send_to_telegram(FILE_FINAL, caption)
-
-    # 2. Kirim ke Facebook Reels
     post_facebook_reels(FILE_FINAL, caption)
-
-    # 3. Cari ID Instagram secara otomatis & Terbitkan
+    
     ig_id = get_instagram_id()
     if ig_id:
         post_instagram_reels(FILE_FINAL, caption, ig_id)
+
+    # Simpan ke riwayat agar tidak diunggah ulang
+    save_to_history(target)
+    print("Spesies resmi dicatat ke history_reels.json!")
     else:
         print("Halaman Facebook belum terhubung ke Akun Bisnis Instagram.")
 
