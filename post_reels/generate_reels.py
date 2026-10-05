@@ -224,13 +224,13 @@ def render_multi_photo_reels(photo_files):
     # FontSize=13 adalah ukuran proporsional di FFmpeg agar teksnya ringkas 1-2 baris
     sub_filter = (
         "subtitles=narasi.srt:force_style='Alignment=2\\,"
-        "FontSize=13\\,"
+        "FontSize=8\\,"
         "Bold=1\\,"
         "PrimaryColour=&H00FFFFFF\\,"
         "OutlineColour=&H00000000\\,"
         "BorderStyle=1\\,"
-        "Outline=2\\,"
-        "MarginV=120'"
+        "Outline=1\\,"
+        "MarginV=25'"
     )
 
     cmd_merge = [
