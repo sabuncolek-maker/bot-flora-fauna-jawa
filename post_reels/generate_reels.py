@@ -48,25 +48,55 @@ def get_species_target():
 # 2. Ambil Foto Asli Resolusi Tinggi
 # ==========================================
 def download_photo(scientific_name):
-    """Mencari foto satwa dari Wikipedia dan menyimpannya sebagai foto.jpg"""
+    """Mencari foto satwa dari Wikipedia dan memastikannya tersimpan sebagai gambar valid"""
+    # User-Agent Header: tanda pengenal peramban agar server tidak memblokir script
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
     url_foto = ""
+
     try:
-        url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{requests.utils.quote(scientific_name)}"
-        headers = {"User-Agent": "FaunaBot/1.0"}
-        r = requests.get(url, headers=headers, timeout=10).json()
-        if "originalimage" in r:
-            url_foto = r["originalimage"]["source"]
-    except Exception:
-        pass
+        url_api = f"https://en.wikipedia.org/api/rest_v1/page/summary/{requests.utils.quote(scientific_name)}"
+        r = requests.get(url_api, headers=headers, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            if "originalimage" in data:
+                url_foto = data["originalimage"]["source"]
+            elif "thumbnail" in data:
+                url_foto = data["thumbnail"]["source"]
 
-    # Jika Wikipedia tidak memiliki foto, gunakan cadangan alam hutan
-    if not url_foto:
-        url_foto = "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1080"
+            # Tolak jika gambar berupa file vektor (.svg) atau peta wilayah
+            if url_foto:
+                cek = url_foto.lower()
+                if any(x in cek for x in [".svg", "map", "range", "distribution"]):
+                    url_foto = ""
+    except Exception as e:
+        print(f"Kendala membaca API Wikipedia: {e}")
 
-    res_img = requests.get(url_foto, timeout=15)
-    with open(FILE_IMAGE, "wb") as f:
-        f.write(res_img.content)
-    print(f"Foto berhasil diunduh dari: {url_foto}")
+    cadangan_url = "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1080"
+    sukses = False
+
+    # 1. Coba unduh foto utama dengan identitas browser
+    if url_foto:
+        try:
+            res_img = requests.get(url_foto, headers=headers, timeout=15)
+            # Validasi Payload: pastikan respons 200 dan ukuran berkas di atas 5 KB (bukan teks error)
+            if res_img.status_code == 200 and len(res_img.content) > 5000:
+                with open(FILE_IMAGE, "wb") as f:
+                    f.write(res_img.content)
+                print(f"Foto valid berhasil diunduh dari: {url_foto}")
+                sukses = True
+            else:
+                print("Foto dari Wikipedia bermasalah atau diblokir. Mengalihkan ke cadangan...")
+        except Exception as e:
+            print(f"Gagal mengunduh foto utama: {e}")
+
+    # 2. Jika foto utama gagal/diblokir, gunakan foto alam cadangan
+    if not sukses:
+        res_cadangan = requests.get(cadangan_url, headers=headers, timeout=15)
+        with open(FILE_IMAGE, "wb") as f:
+            f.write(res_cadangan.content)
+        print("Menggunakan foto cadangan alam Unsplash yang valid.")
 
 # ==========================================
 # 3. Riset Naskah 30 Detik (Groq AI)
