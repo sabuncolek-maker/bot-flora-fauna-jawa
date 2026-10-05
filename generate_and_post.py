@@ -5,16 +5,15 @@ import random
 import requests
 from jinja2 import Template
 from playwright.sync_api import sync_playwright
-from google import genai
-from google.genai import types
+from groq import Groq
 
 # 1. Validasi Environment Variables
-GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
+GROQ_KEY = os.environ.get("GROQ_API_KEY")
 FB_PAGE_ID = os.environ.get("FB_PAGE_ID")
 FB_ACCESS_TOKEN = os.environ.get("FB_PAGE_ACCESS_TOKEN")
 
-if not all([GEMINI_KEY, FB_PAGE_ID, FB_ACCESS_TOKEN]):
-    raise ValueError("Error: Secrets belum lengkap diatur di GitHub!")
+if not all([GROQ_KEY, FB_PAGE_ID, FB_ACCESS_TOKEN]):
+    raise ValueError("Error: Secrets (GROQ_API_KEY, FB_PAGE_ID, FB_PAGE_ACCESS_TOKEN) belum lengkap di GitHub!")
 
 # 2. Manajemen Riwayat & Rotasi Spesies
 SPECIES_FILE = "species_list.json"
@@ -54,15 +53,20 @@ def fetch_wikipedia_image(latin_name):
         print(f"Gagal mengambil gambar: {e}")
     return "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1080"
 
-# 4. Riset via Gemini API dengan Retry Otomatis
-client = genai.Client(api_key=GEMINI_KEY)
+# 4. Riset via Groq API (Llama 3.3 70B Versatile)
+client = Groq(api_key=GROQ_KEY)
 
-prompt = f"""
-Kamu adalah edukator biologi ahli flora & fauna Pulau Jawa.
+system_prompt = (
+    "Kamu adalah edukator biologi ahli flora & fauna Pulau Jawa. "
+    "Tugasmu meriset spesies yang diminta dan memberikan data edukasi akurat. "
+    "Wajib berikan output HANYA dalam format JSON valid tanpa tanda markdown (```json ... ```)."
+)
+
+user_prompt = f"""
 Fokuskan riset kamu pada spesies ini: '{selected_latin}'.
 Tentukan apakah ini FLORA atau FAUNA, cari nama umumnya di Indonesia, lokasi habitat spesifik di Jawa, dan 3 fakta uniknya.
 
-Kembalikan format JSON murni tanpa markdown:
+Format JSON yang wajib diikuti:
 {{
   "category": "FLORA atau FAUNA",
   "name": "Nama Indonesia/Umum",
@@ -77,28 +81,30 @@ Kembalikan format JSON murni tanpa markdown:
 }}
 """
 
-print("[1/4] Meriset konten via Gemini...")
+print("[1/4] Meriset konten via Groq...")
 
-# Coba hingga 3 kali jika server Google sedang sibuk (503)
-response = None
+data = None
 for attempt in range(3):
     try:
-        response = client.models.generate_content(
-            model="gemini-3.8-flash",
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json"
-            )
+        chat_completion = client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            model="llama-3.3-70b-versatile",
+            temperature=0.4,
+            response_format={"type": "json_object"}
         )
+        raw_text = chat_completion.choices[0].message.content
+        data = json.loads(raw_text)
         break
     except Exception as e:
-        print(f"Server Google sibuk (percobaan {attempt+1}/3): {e}")
-        time.sleep(5 * (attempt + 1))  # Jeda: 5 detik, lalu 10 detik
+        print(f"Kendala menghubungi Groq (percobaan {attempt+1}/3): {e}")
+        time.sleep(3 * (attempt + 1))
 
-if not response:
-    raise RuntimeError("Gagal menghubungi Gemini setelah 3 percobaan.")
+if not data:
+    raise RuntimeError("Gagal mengambil data dari Groq setelah 3 percobaan.")
 
-data = json.loads(response.text)
 print(f"-> Terpilih: {data['name']} ({data['latin_name']})")
 
 # 5. Rendering HTML ke Grafik Raster via Playwright
