@@ -90,15 +90,17 @@ system_prompt = (
 
 user_prompt = f"""
 Riset spesies ini: '{selected_latin}'.
-Tentukan apakah ini FLORA (tumbuhan) atau FAUNA (hewan), sebutkan nama lokal/populernya di Indonesia, lokasi alamnya di Jawa, serta 3 fakta serunya.
+Tentukan apakah ini FLORA (tumbuhan) atau FAUNA (hewan), sebutkan status konservasinya, nama lokal/populernya di Indonesia, lokasi alamnya di Jawa, serta 3 fakta serunya.
 
 Kaidah isi:
-1. 'facts': Buat 3 fakta unik yang ceritanya enak dibaca orang biasa. Penjelasannya padat, maksimal 20 kata per fakta.
-2. 'fb_caption': Tulis naskah postingan Facebook yang ramah, asyik dibaca, sisipkan emotikon yang pas, ajakan menjaga alam, dan hashtag yang relevan.
+1. 'iucn_status': Isi status kelangkaan dalam bahasa Indonesia yang ringkas, contoh: 'Kritis (CR)', 'Genting (EN)', 'Rentan (VU)', 'Risiko Rendah (LC)', atau 'Belum Dievaluasi'.
+2. 'facts': Buat 3 fakta unik yang ceritanya enak dibaca orang biasa. Penjelasannya padat, maksimal 20 kata per fakta.
+3. 'fb_caption': Tulis naskah postingan Facebook yang ramah, santai, sisipkan fakta status kelangkaannya, ajakan menjaga alam, emotikon, dan hashtag relevan.
 
 Ikuti format JSON persis seperti ini:
 {{
   "category": "FLORA atau FAUNA",
+  "iucn_status": "Contoh: Genting (EN)",
   "name": "Nama Indonesia/Umum yang Akrab Didengar",
   "latin_name": "{selected_latin}",
   "habitat": "Contoh: Hutan Lindung Gunung Slamet, TN Ujung Kulon, dll",
