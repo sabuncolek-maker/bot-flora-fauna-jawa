@@ -117,10 +117,10 @@ def fetch_inaturalist_image(latin_name):
     return None
 
 def fetch_species_image(latin_name):
-    """Pencarian foto bertingkat: Wikipedia -> iNaturalist -> Unsplash"""
     headers = {"User-Agent": "FaunaBot/1.0 (contact@indobizarre.local)"}
     cadangan = "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1080"
     
+    # 1. Coba Wikipedia
     try:
         url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{requests.utils.quote(latin_name)}"
         r = requests.get(url, headers=headers, timeout=10)
@@ -137,18 +137,18 @@ def fetch_species_image(latin_name):
                 kata_terlarang = ["map", "range", "distribution", "sebaran", ".svg"]
                 if not any(kata in url_kecil for kata in kata_terlarang):
                     print("-> Foto berhasil diambil dari Wikipedia!")
-                    return img_url
-                else:
-                    print("Foto Wikipedia terdeteksi peta, beralih ke iNaturalist...")
+                    return img_url, "Wikimedia Commons"
     except Exception as e:
         print(f"Gagal memproses Wikipedia: {e}")
 
+    # 2. Coba iNaturalist
     inat_img = fetch_inaturalist_image(latin_name)
     if inat_img:
-        return inat_img
+        return inat_img, "iNaturalist"
 
+    # 3. Cadangan Unsplash
     print("Foto spesifik tidak ditemukan, memakai foto cadangan alam.")
-    return cadangan
+    return cadangan, "Unsplash"
 
 def send_telegram_alert(pesan):
     """Mengirim notifikasi status ke Telegram"""
@@ -291,7 +291,9 @@ print(f"-> Terpilih: {data['name']} ({data['latin_name']})")
 # 6. Pasang Data ke Desain HTML lalu Render Gambar PNG
 # ==========================================
 print("[2/4] Mengambil foto...")
-data['image_url'] = fetch_species_image(selected_latin)
+img_url, sumber_foto = fetch_species_image(selected_latin)
+data['image_url'] = img_url
+data['image_source'] = sumber_foto
 
 print("[3/4] Merender gambar infografis...")
 with open("template.html", "r", encoding="utf-8") as f:
