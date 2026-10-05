@@ -8,21 +8,24 @@ import requests
 import edge_tts
 from groq import Groq
 
-# Mengunci folder kerja otomatis di folder 'post_reels'
+# Mengunci folder kerja otomatis
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FILE_AUDIO = os.path.join(BASE_DIR, "narasi.mp3")
-FILE_IMAGE = os.path.join(BASE_DIR, "foto.jpg")
-FILE_OUTPUT = os.path.join(BASE_DIR, "reels_30detik.mp4")
+FILE_FINAL = os.path.join(BASE_DIR, "reels_30detik.mp4")
 
 GROQ_KEY = str(os.environ.get("GROQ_API_KEY") or "").strip()
 if not GROQ_KEY:
     raise ValueError("GROQ_API_KEY belum terpasang di GitHub Secrets!")
 
+HEADERS_BROWSER = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+}
+
 # ==========================================
-# 1. Ambil Spesies dari GBIF (Titik Jawa)
+# 1. Ambil Spesies Liar Jawa (GBIF API)
 # ==========================================
 def get_species_target():
-    """Mengambil spesies liar Jawa dari GBIF API atau fallback cadangan"""
+    """Mengambil target spesies liar Jawa"""
     try:
         polygon_jawa = "POLYGON((105.1 -5.8, 114.6 -5.8, 114.6 -8.8, 105.1 -8.8, 105.1 -5.8))"
         url = "https://api.gbif.org/v1/occurrence/search"
@@ -34,80 +37,94 @@ def get_species_target():
             "limit": 30,
             "offset": random.randint(0, 100)
         }
-        res = requests.get(url, params=params, timeout=12).json()
+        res = requests.get(url, params=params, headers=HEADERS_BROWSER, timeout=12).json()
         results = res.get("results", [])
         kandidat = [item.get("species") for item in results if item.get("species")]
         if kandidat:
             return random.choice(list(set(kandidat)))
     except Exception as e:
         print(f"Kendala GBIF: {e}")
-    # Cadangan lokal jika server GBIF sibuk
     return random.choice(["Panthera pardus melas", "Nisaetus bartelsi", "Presbytis comata"])
 
 # ==========================================
-# 2. Ambil Foto Asli Resolusi Tinggi
+# 2. Unduh 3 Foto Berbeda (iNaturalist & Wikipedia)
 # ==========================================
-def download_photo(scientific_name):
-    """Mencari foto satwa dari Wikipedia dan memastikannya tersimpan sebagai gambar valid"""
-    # User-Agent Header: tanda pengenal peramban agar server tidak memblokir script
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-    url_foto = ""
-
+def download_3_photos(scientific_name):
+    """Mengumpulkan 3 gambar observasi berbeda agar video variatif"""
+    urls = []
+    
+    # 1. Ambil foto-foto observasi liar dari iNaturalist API
     try:
-        url_api = f"https://en.wikipedia.org/api/rest_v1/page/summary/{requests.utils.quote(scientific_name)}"
-        r = requests.get(url_api, headers=headers, timeout=10)
-        if r.status_code == 200:
-            data = r.json()
-            if "originalimage" in data:
-                url_foto = data["originalimage"]["source"]
-            elif "thumbnail" in data:
-                url_foto = data["thumbnail"]["source"]
-
-            # Tolak jika gambar berupa file vektor (.svg) atau peta wilayah
-            if url_foto:
-                cek = url_foto.lower()
-                if any(x in cek for x in [".svg", "map", "range", "distribution"]):
-                    url_foto = ""
+        url_inat = f"https://api.inaturalist.org/v1/observations?taxon_name={requests.utils.quote(scientific_name)}&has[]=photos&quality_grade=research&per_page=6"
+        res_inat = requests.get(url_inat, headers=HEADERS_BROWSER, timeout=10).json()
+        for item in res_inat.get("results", []):
+            for photo in item.get("photos", []):
+                link = photo.get("url", "").replace("square", "large")
+                if link and link not in urls:
+                    urls.append(link)
+                if len(urls) >= 3:
+                    break
+            if len(urls) >= 3:
+                break
     except Exception as e:
-        print(f"Kendala membaca API Wikipedia: {e}")
+        print(f"Kendala iNaturalist: {e}")
 
-    cadangan_url = "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1080"
-    sukses = False
-
-    # 1. Coba unduh foto utama dengan identitas browser
-    if url_foto:
+    # 2. Jika foto iNaturalist kurang dari 3, lengkapi dari Wikipedia
+    if len(urls) < 3:
         try:
-            res_img = requests.get(url_foto, headers=headers, timeout=15)
-            # Validasi Payload: pastikan respons 200 dan ukuran berkas di atas 5 KB (bukan teks error)
-            if res_img.status_code == 200 and len(res_img.content) > 5000:
-                with open(FILE_IMAGE, "wb") as f:
-                    f.write(res_img.content)
-                print(f"Foto valid berhasil diunduh dari: {url_foto}")
-                sukses = True
-            else:
-                print("Foto dari Wikipedia bermasalah atau diblokir. Mengalihkan ke cadangan...")
-        except Exception as e:
-            print(f"Gagal mengunduh foto utama: {e}")
+            url_wiki = f"https://en.wikipedia.org/api/rest_v1/page/summary/{requests.utils.quote(scientific_name)}"
+            r = requests.get(url_wiki, headers=HEADERS_BROWSER, timeout=10).json()
+            if "originalimage" in r:
+                w_url = r["originalimage"]["source"]
+                if w_url not in urls and not any(ext in w_url.lower() for ext in [".svg", "map", "range"]):
+                    urls.append(w_url)
+        except Exception:
+            pass
 
-    # 2. Jika foto utama gagal/diblokir, gunakan foto alam cadangan
-    if not sukses:
-        res_cadangan = requests.get(cadangan_url, headers=headers, timeout=15)
-        with open(FILE_IMAGE, "wb") as f:
-            f.write(res_cadangan.content)
-        print("Menggunakan foto cadangan alam Unsplash yang valid.")
+    # 3. Foto cadangan alam jika spesies sangat langka dan fotonya sedikit
+    cadangan = [
+        "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1080",
+        "https://images.unsplash.com/photo-1448375240586-882707db888b?w=1080",
+        "https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?w=1080"
+    ]
+    for c in cadangan:
+        if len(urls) >= 3:
+            break
+        if c not in urls:
+            urls.append(c)
+
+    # Simpan 3 file gambar fisik
+    saved_files = []
+    for idx, img_url in enumerate(urls[:3], start=1):
+        file_path = os.path.join(BASE_DIR, f"foto_{idx}.jpg")
+        try:
+            r = requests.get(img_url, headers=HEADERS_BROWSER, timeout=15)
+            if r.status_code == 200 and len(r.content) > 5000:
+                with open(file_path, "wb") as f:
+                    f.write(r.content)
+                saved_files.append(file_path)
+                print(f"Foto {idx} berhasil disimpan ({len(r.content)} bytes)")
+            else:
+                # Gunakan gambar cadangan lokal jika unduhan gagal
+                r_fallback = requests.get(cadangan[idx-1], headers=HEADERS_BROWSER, timeout=15)
+                with open(file_path, "wb") as f:
+                    f.write(r_fallback.content)
+                saved_files.append(file_path)
+        except Exception as e:
+            print(f"Gagal unduh foto {idx}: {e}")
+            
+    return saved_files
 
 # ==========================================
-# 3. Riset Naskah 30 Detik (Groq AI)
+# 3. Naskah Dokumenter 30 Detik (Groq AI)
 # ==========================================
 def generate_english_script(scientific_name):
-    """Membuat naskah narasi bahasa Inggris berdurasi pas 30 detik (65-70 kata)"""
+    """Menyusun narasi pas 30 detik (65-70 kata)"""
     client = Groq(api_key=GROQ_KEY)
     prompt = f"""
     Write a dramatic, captivating wildlife documentary voiceover script about '{scientific_name}' from Java Island.
-    Style: National Geographic or BBC Earth documentary style.
-    Length constraint: Exactly between 65 and 70 words (to precisely match a 28-30 seconds speech duration).
+    Style: National Geographic or BBC Earth documentary narration.
+    Length constraint: Exactly between 65 and 70 words (to precisely match 28-30 seconds speech duration).
     Output: Return ONLY the plain English narration text, nothing else. No titles, no bullet points, no markdown.
     """
     completion = client.chat.completions.create(
@@ -120,51 +137,84 @@ def generate_english_script(scientific_name):
     return naskah
 
 # ==========================================
-# 4. Buat Rekaman Suara (Edge-TTS)
+# 4. Rekam Suara (Edge-TTS)
 # ==========================================
 async def generate_voiceover(text):
-    """Mengubah teks naskah menjadi file suara narator dokumenter"""
-    # Karakter suara narator pria Amerika berwibawa
+    """Mengubah teks naskah menjadi audio narasi jernih"""
     voice = "en-US-ChristopherNeural"
     tts = edge_tts.Communicate(text, voice)
     await tts.save(FILE_AUDIO)
-    print("Rekaman audio narasi berhasil disimpan ke:", FILE_AUDIO)
+    print("Rekaman narasi selesai dibuat:", FILE_AUDIO)
 
 # ==========================================
-# 5. Render Video Vertikal (Ken Burns via FFmpeg)
+# 5. Render Video 3 Foto Bergantian (FFmpeg)
 # ==========================================
-def render_video_30s():
-    """Merakit foto dan audio menjadi video Reels vertikal 1080x1920 durasi 30 detik"""
-    print("Memulai proses render video dengan FFmpeg...")
-    # d=750 frame pada 25fps = 30 detik pas
-    cmd = [
+def render_multi_photo_reels(photo_files):
+    """Merender 3 foto bergantian @ 10 detik dengan kanvas blur estetik"""
+    clip_files = []
+    
+    # Buat 3 sub-klip video (masing-masing 10 detik)
+    for idx, photo in enumerate(photo_files, start=1):
+        clip_output = os.path.join(BASE_DIR, f"clip_{idx}.mp4")
+        print(f"Merender Klip {idx} (durasi 10 detik)...")
+        
+        # Filter Kanvas Blur:
+        # 1. Background diperbesar dan diburamkan (boxblur)
+        # 2. Foto utama di tengah ditaruh proporsional (tanpa kepotong)
+        # 3. Zoom halus perlahan ke seluruh layar
+        filter_str = (
+            "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=25:5[bg];"
+            "[0:v]scale=1080:1920:force_original_aspect_ratio=decrease[fg];"
+            "[bg][fg]overlay=(W-w)/2:(H-h)/2,"
+            "zoompan=z='min(zoom+0.0008,1.1)':d=250:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=25"
+        )
+        
+        cmd_clip = [
+            "ffmpeg", "-y",
+            "-loop", "1",
+            "-i", photo,
+            "-t", "10",
+            "-filter_complex", filter_str,
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            clip_output
+        ]
+        subprocess.run(cmd_clip, check=True)
+        clip_files.append(clip_output)
+
+    # Satukan 3 klip dan gabungkan dengan rekaman audio
+    concat_txt = os.path.join(BASE_DIR, "concat_list.txt")
+    with open(concat_txt, "w", encoding="utf-8") as f:
+        for c in clip_files:
+            f.write(f"file '{c}'\n")
+
+    print("Menggabungkan 3 klip dengan file audio...")
+    cmd_merge = [
         "ffmpeg", "-y",
-        "-loop", "1",
-        "-i", FILE_IMAGE,
+        "-f", "concat",
+        "-safe", "0",
+        "-i", concat_txt,
         "-i", FILE_AUDIO,
-        "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,zoompan=z='min(zoom+0.0006,1.25)':d=750:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=25",
-        "-c:v", "libx264",
-        "-t", "30",
-        "-pix_fmt", "yuv420p",
+        "-c:v", "copy",
         "-c:a", "aac",
         "-b:a", "192k",
         "-shortest",
-        FILE_OUTPUT
+        FILE_FINAL
     ]
-    subprocess.run(cmd, check=True)
-    print("Render berhasil! File video tersimpan di:", FILE_OUTPUT)
+    subprocess.run(cmd_merge, check=True)
+    print("Video Reels 30 detik selesai dibuat:", FILE_FINAL)
 
 # ==========================================
-# Eksekusi Utama
+# Alur Eksekusi Utama
 # ==========================================
 def main():
     target = get_species_target()
     print(f"Target Spesies Reels: {target}")
 
-    download_photo(target)
+    photos = download_3_photos(target)
     naskah = generate_english_script(target)
     asyncio.run(generate_voiceover(naskah))
-    render_video_30s()
+    render_multi_photo_reels(photos)
 
 if __name__ == "__main__":
     main()
