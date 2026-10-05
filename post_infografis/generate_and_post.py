@@ -314,9 +314,7 @@ with sync_playwright() as p:
 # ==========================================
 print("[4/4] Mengunggah ke Facebook...")
 
-bagian_1 = "https://"
-bagian_2 = "graph.facebook.com/v21.0/](https://graph.facebook.com/v21.0/)"
-fb_url = bagian_1 + bagian_2 + FB_PAGE_ID + "/photos"
+fb_url = f"https://graph.facebook.com/v21.0/{FB_PAGE_ID}/photos"
 
 with open(image_path, "rb") as img_file:
     payload = {
