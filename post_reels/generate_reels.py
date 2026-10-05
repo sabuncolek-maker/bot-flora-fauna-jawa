@@ -11,6 +11,7 @@ from groq import Groq
 # Mengunci folder kerja otomatis
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FILE_AUDIO = os.path.join(BASE_DIR, "narasi.mp3")
+FILE_SRT = os.path.join(BASE_DIR, "narasi.srt")
 FILE_FINAL = os.path.join(BASE_DIR, "reels_30detik.mp4")
 
 GROQ_KEY = str(os.environ.get("GROQ_API_KEY") or "").strip()
@@ -69,7 +70,7 @@ def download_3_photos(scientific_name):
     except Exception as e:
         print(f"Kendala iNaturalist: {e}")
 
-    # 2. Jika foto iNaturalist kurang dari 3, lengkapi dari Wikipedia
+    # 2. Lengkapi dari Wikipedia jika kurang
     if len(urls) < 3:
         try:
             url_wiki = f"https://en.wikipedia.org/api/rest_v1/page/summary/{requests.utils.quote(scientific_name)}"
@@ -81,7 +82,7 @@ def download_3_photos(scientific_name):
         except Exception:
             pass
 
-    # 3. Foto cadangan alam jika spesies sangat langka dan fotonya sedikit
+    # 3. Foto cadangan alam
     cadangan = [
         "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1080",
         "https://images.unsplash.com/photo-1448375240586-882707db888b?w=1080",
@@ -93,7 +94,7 @@ def download_3_photos(scientific_name):
         if c not in urls:
             urls.append(c)
 
-    # Simpan 3 file gambar fisik
+    # Simpan file fisik
     saved_files = []
     for idx, img_url in enumerate(urls[:3], start=1):
         file_path = os.path.join(BASE_DIR, f"foto_{idx}.jpg")
@@ -103,9 +104,7 @@ def download_3_photos(scientific_name):
                 with open(file_path, "wb") as f:
                     f.write(r.content)
                 saved_files.append(file_path)
-                print(f"Foto {idx} berhasil disimpan ({len(r.content)} bytes)")
             else:
-                # Gunakan gambar cadangan lokal jika unduhan gagal
                 r_fallback = requests.get(cadangan[idx-1], headers=HEADERS_BROWSER, timeout=15)
                 with open(file_path, "wb") as f:
                     f.write(r_fallback.content)
@@ -137,31 +136,39 @@ def generate_english_script(scientific_name):
     return naskah
 
 # ==========================================
-# 4. Rekam Suara (Edge-TTS)
+# 4. Rekam Suara + Buat Subtitle Otomatis
 # ==========================================
-async def generate_voiceover(text):
-    """Mengubah teks naskah menjadi audio narasi jernih"""
+async def generate_voiceover_and_subtitles(text):
+    """Membuat file MP3 sekaligus file subtitle SRT otomatis"""
     voice = "en-US-ChristopherNeural"
     tts = edge_tts.Communicate(text, voice)
-    await tts.save(FILE_AUDIO)
-    print("Rekaman narasi selesai dibuat:", FILE_AUDIO)
+    submaker = edge_tts.SubMaker()
+
+    with open(FILE_AUDIO, "wb") as f_audio:
+        async for chunk in tts.stream():
+            if chunk["type"] == "audio":
+                f_audio.write(chunk["data"])
+            elif chunk["type"] == "WordBoundary":
+                submaker.feed(chunk)
+
+    # Simpan naskah berwaktu ke format standar SubRip (.srt)
+    with open(FILE_SRT, "w", encoding="utf-8") as f_sub:
+        f_sub.write(submaker.get_srt())
+
+    print("Audio dan berkas subtitle SRT berhasil dibuat!")
 
 # ==========================================
-# 5. Render Video 3 Foto Bergantian (FFmpeg)
+# 5. Render Video + Tempelkan Subtitle (Hardsub)
 # ==========================================
 def render_multi_photo_reels(photo_files):
-    """Merender 3 foto bergantian @ 10 detik dengan kanvas blur estetik"""
+    """Merender 3 foto dan menempelkan teks subtitle ke layar video"""
     clip_files = []
     
-    # Buat 3 sub-klip video (masing-masing 10 detik)
+    # 1. Bikin 3 sub-klip video berkanvas blur (@ 10 detik)
     for idx, photo in enumerate(photo_files, start=1):
         clip_output = os.path.join(BASE_DIR, f"clip_{idx}.mp4")
-        print(f"Merender Klip {idx} (durasi 10 detik)...")
+        print(f"Merender Klip {idx}...")
         
-        # Filter Kanvas Blur:
-        # 1. Background diperbesar dan diburamkan (boxblur)
-        # 2. Foto utama di tengah ditaruh proporsional (tanpa kepotong)
-        # 3. Zoom halus perlahan ke seluruh layar
         filter_str = (
             "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=25:5[bg];"
             "[0:v]scale=1080:1920:force_original_aspect_ratio=decrease[fg];"
@@ -182,27 +189,43 @@ def render_multi_photo_reels(photo_files):
         subprocess.run(cmd_clip, check=True)
         clip_files.append(clip_output)
 
-    # Satukan 3 klip dan gabungkan dengan rekaman audio
+    # 2. Siapkan daftar penggabungan video
     concat_txt = os.path.join(BASE_DIR, "concat_list.txt")
     with open(concat_txt, "w", encoding="utf-8") as f:
         for c in clip_files:
             f.write(f"file '{c}'\n")
 
-    print("Menggabungkan 3 klip dengan file audio...")
+    # 3. Gabungkan klip, pasang audio, dan tempel subtitle
+    print("Menggabungkan klip dan menempelkan teks subtitle...")
+    
+    # Nama file relatif agar tidak terbentur tanda titik dua path Linux di FFmpeg
+    srt_filename = os.path.basename(FILE_SRT)
+    
+    # Penataan gaya subtitle:
+    # - Alignment=2: Posisi bawah tengah
+    # - MarginV=140: Jarak aman dari bawah agar tidak tertutup tombol 'Like/Share' Reels
+    # - BorderStyle=1, Outline=2: Huruf putih tebal dengan garis tepi hitam tegas
+    sub_filter = (
+        f"subtitles={srt_filename}:force_style='Alignment=2,FontSize=18,Bold=1,"
+        f"PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,MarginV=140'"
+    )
+
     cmd_merge = [
         "ffmpeg", "-y",
         "-f", "concat",
         "-safe", "0",
         "-i", concat_txt,
         "-i", FILE_AUDIO,
-        "-c:v", "copy",
+        "-vf", sub_filter,
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
         "-c:a", "aac",
         "-b:a", "192k",
         "-shortest",
         FILE_FINAL
     ]
     subprocess.run(cmd_merge, check=True)
-    print("Video Reels 30 detik selesai dibuat:", FILE_FINAL)
+    print("Video Reels 30 detik + Subtitle selesai dibuat:", FILE_FINAL)
 
 # ==========================================
 # Alur Eksekusi Utama
@@ -213,7 +236,7 @@ def main():
 
     photos = download_3_photos(target)
     naskah = generate_english_script(target)
-    asyncio.run(generate_voiceover(naskah))
+    asyncio.run(generate_voiceover_and_subtitles(naskah))
     render_multi_photo_reels(photos)
 
 if __name__ == "__main__":
