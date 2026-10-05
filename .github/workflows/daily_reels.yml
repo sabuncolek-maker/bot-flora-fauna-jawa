@@ -1,12 +1,15 @@
-name: Generate Reels Video 30 Detik
+name: Generate & Post Reels 30 Detik
 
 on:
-  workflow_dispatch: # Pemicu tombol manual untuk pengetesan
+  schedule:
+    # 18:00 UTC = Jam 01:00 WIB dini hari
+    - cron: '0 18 * * *'
+  workflow_dispatch:
 
 jobs:
-  build-reels:
+  build-and-post-reels:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -22,18 +25,16 @@ jobs:
           sudo apt-get install -y ffmpeg
 
       - name: Install Dependencies
-        run: |
-          pip install -r requirements.txt
+        run: pip install -r requirements.txt
 
-      - name: Jalankan Render Reels
+      - name: Jalankan Render dan Posting Reels
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          FB_ACCESS_TOKEN: ${{ secrets.FB_ACCESS_TOKEN }}
+          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+          INSTAGRAM_ACCOUNT_ID: ${{ secrets.INSTAGRAM_ACCOUNT_ID }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           cd post_reels
           python generate_reels.py
-
-      - name: Simpan Hasil Video ke Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: video-reels-30-detik
-          path: post_reels/reels_30detik.mp4
