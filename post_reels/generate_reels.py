@@ -2,6 +2,7 @@ import os
 import sys
 import re
 import json
+import time
 import random
 import asyncio
 import subprocess
@@ -9,13 +10,21 @@ import requests
 import edge_tts
 from groq import Groq
 
-# Mengunci folder kerja otomatis
+# ==========================================
+# 0. Konfigurasi Sistem & Kredensial
+# ==========================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FILE_AUDIO = os.path.join(BASE_DIR, "narasi.mp3")
 FILE_SRT = os.path.join(BASE_DIR, "narasi.srt")
 FILE_FINAL = os.path.join(BASE_DIR, "reels_30detik.mp4")
 
 GROQ_KEY = str(os.environ.get("GROQ_API_KEY") or "").strip()
+FB_TOKEN = str(os.environ.get("FB_ACCESS_TOKEN") or "").strip()
+FB_PAGE_ID = str(os.environ.get("FB_PAGE_ID") or "").strip()
+IG_USER_ID = str(os.environ.get("INSTAGRAM_ACCOUNT_ID") or "").strip()
+TELEGRAM_TOKEN = str(os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
+TELEGRAM_CHAT_ID = str(os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
+
 if not GROQ_KEY:
     raise ValueError("GROQ_API_KEY belum terpasang di GitHub Secrets!")
 
@@ -24,9 +33,10 @@ HEADERS_BROWSER = {
 }
 
 # ==========================================
-# 1. Target Spesies Liar Jawa (GBIF)
+# 1. Target Spesies Liar Jawa (GBIF API)
 # ==========================================
 def get_species_target():
+    """Mengambil spesies liar endemik/terancam di Pulau Jawa dari GBIF"""
     try:
         polygon_jawa = "POLYGON((105.1 -5.8, 114.6 -5.8, 114.6 -8.8, 105.1 -8.8, 105.1 -5.8))"
         url = "https://api.gbif.org/v1/occurrence/search"
@@ -51,10 +61,10 @@ def get_species_target():
 # 2. Ambil Foto Alam Liar (Prioritas iNaturalist)
 # ==========================================
 def download_3_photos(scientific_name):
-    """Mengumpulkan 3 foto alam asli dan menghindari gambar sketsa berlatar putih"""
+    """Mengunduh 3 foto lapangan asli beresolusi tinggi"""
     urls = []
     
-    # 1. Tarik foto observasi lapangan dari fotografer iNaturalist
+    # 1. Foto observasi lapangan dari iNaturalist
     try:
         url_inat = f"https://api.inaturalist.org/v1/observations?taxon_name={requests.utils.quote(scientific_name)}&has[]=photos&quality_grade=research&per_page=10"
         res_inat = requests.get(url_inat, headers=HEADERS_BROWSER, timeout=10).json()
@@ -77,14 +87,13 @@ def download_3_photos(scientific_name):
             r = requests.get(url_wiki, headers=HEADERS_BROWSER, timeout=10).json()
             if "originalimage" in r:
                 w_url = r["originalimage"]["source"]
-                # Tolak gambar sketsa, diagram, peta, atau file SVG
                 kata_tolak = [".svg", "map", "range", "drawing", "illustration", "plate"]
                 if w_url not in urls and not any(k in w_url.lower() for k in kata_tolak):
                     urls.append(w_url)
         except Exception:
             pass
 
-    # 3. Foto cadangan alam liar hutan tropis
+    # 3. Foto cadangan alam liar
     cadangan = [
         "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1080",
         "https://images.unsplash.com/photo-1448375240586-882707db888b?w=1080",
@@ -119,12 +128,13 @@ def download_3_photos(scientific_name):
 # 3. Riset Naskah Narasi (Groq AI)
 # ==========================================
 def generate_english_script(scientific_name):
+    """Menyusun naskah dokumenter pas 30 detik (60-65 kata)"""
     client = Groq(api_key=GROQ_KEY)
     prompt = f"""
     Write a dramatic wildlife documentary narration about '{scientific_name}' from Java Island.
-    Style: BBC Earth or National Geographic documentary.
+    Style: BBC Earth or National Geographic documentary narration.
     Length: Exactly 4 distinct sentences, total 60-65 words.
-    Format: Return ONLY the narration text. No markdown, no titles.
+    Format: Return ONLY the plain English narration text. No markdown, no titles.
     """
     completion = client.chat.completions.create(
         model="openai/gpt-oss-120b",
@@ -132,14 +142,14 @@ def generate_english_script(scientific_name):
         temperature=0.5
     )
     naskah = completion.choices[0].message.content.strip().replace('"', '')
-    print(f"Naskah:\n{naskah}\n")
+    print(f"Naskah Narasi:\n{naskah}\n")
     return naskah
 
 # ==========================================
 # 4. Audio Narasi & Generator Subtitle Per Kalimat
 # ==========================================
 def format_srt_time(seconds):
-    """Mengubah detik menjadi format waktu standar subtitle jam:menit:detik,milidetik"""
+    """Mengubah detik ke format standar SubRip (jam:menit:detik,milidetik)"""
     millis = int((seconds - int(seconds)) * 1000)
     secs = int(seconds) % 60
     mins = int(seconds // 60) % 60
@@ -147,17 +157,15 @@ def format_srt_time(seconds):
     return f"{hours:02d}:{mins:02d}:{secs:02d},{millis:03d}"
 
 async def create_audio_and_clean_subtitles(text):
-    # 1. Simpan suara narator
+    """Membuat rekaman suara Edge-TTS dan file narasi.srt per kalimat"""
     voice = "en-US-ChristopherNeural"
     tts = edge_tts.Communicate(text, voice)
     await tts.save(FILE_AUDIO)
 
-    # 2. Potong naskah menjadi beberapa kalimat terpisah
     kalimat_list = [k.strip() for k in re.split(r'(?<=[.!?])\s+', text) if k.strip()]
     if not kalimat_list:
         kalimat_list = [text]
 
-    # Bagi durasi 28 detik secara proporsional sesuai jumlah kata per kalimat
     total_kata = sum(len(k.split()) for k in kalimat_list)
     durasi_total = 28.0
     waktu_mulai = 0.5
@@ -168,7 +176,6 @@ async def create_audio_and_clean_subtitles(text):
         durasi_kalimat = (kata_kalimat / total_kata) * durasi_total
         waktu_selesai = waktu_mulai + durasi_kalimat
 
-        # Batasi panjang baris teks agar tidak melebar keluar batas layar
         kata_per_kata = kalimat.split()
         if len(kata_per_kata) > 7:
             tengah = len(kata_per_kata) // 2
@@ -181,18 +188,18 @@ async def create_audio_and_clean_subtitles(text):
 
     with open(FILE_SRT, "w", encoding="utf-8") as f_sub:
         f_sub.write("\n".join(srt_lines))
-    print("Subtitle bersih per kalimat berhasil dibuat!")
+    print("Audio MP3 dan berkas Subtitle SRT selesai dibuat!")
 
 # ==========================================
-# 5. Render Video & Hardsub Rapi
+# 5. Render Video 3 Foto & Hardsub Rapi (FFmpeg)
 # ==========================================
 def render_multi_photo_reels(photo_files):
+    """Merender 3 foto bergantian dengan latar kanvas blur dan subtitle presisi"""
     clip_files = []
     
-    # 1. Bikin 3 klip video @ 10 detik dengan kanvas blur
     for idx, photo in enumerate(photo_files, start=1):
         clip_output = os.path.join(BASE_DIR, f"clip_{idx}.mp4")
-        print(f"Merender Klip {idx}...")
+        print(f"Merender Klip {idx} (durasi 10 detik)...")
         
         filter_str = (
             "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=25:5[bg];"
@@ -214,14 +221,12 @@ def render_multi_photo_reels(photo_files):
         subprocess.run(cmd_clip, check=True, cwd=BASE_DIR)
         clip_files.append(clip_output)
 
-    # 2. Siapkan file concat
     concat_txt = os.path.join(BASE_DIR, "concat_list.txt")
     with open(concat_txt, "w", encoding="utf-8") as f:
         for c in clip_files:
             f.write(f"file '{c}'\n")
 
-    # 3. Tempelkan subtitle rapi di bagian bawah layar
-    # FontSize=13 adalah ukuran proporsional di FFmpeg agar teksnya ringkas 1-2 baris
+    print("Menggabungkan seluruh klip dan mencetak subtitle...")
     sub_filter = (
         "subtitles=narasi.srt:force_style='Alignment=2\\,"
         "FontSize=8\\,"
@@ -248,10 +253,94 @@ def render_multi_photo_reels(photo_files):
         FILE_FINAL
     ]
     subprocess.run(cmd_merge, check=True, cwd=BASE_DIR)
-    print("Render final sukses:", FILE_FINAL)
+    print("Render final Reels sukses:", FILE_FINAL)
 
 # ==========================================
-# Alur Utama
+# 6. Distribusi Telegram Bot
+# ==========================================
+def send_to_telegram(video_path, caption_text):
+    """Mengirim video hasil render ke Telegram pribadi sebagai bukti tayang"""
+    if not (TELEGRAM_TOKEN and TELEGRAM_CHAT_ID):
+        print("Kredensial Telegram belum diatur, lewati pengiriman Telegram.")
+        return
+    try:
+        print("Mengirim video arsip ke Telegram...")
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendVideo"
+        with open(video_path, "rb") as f:
+            requests.post(
+                url,
+                data={"chat_id": TELEGRAM_CHAT_ID, "caption": caption_text[:1000]},
+                files={"video": f},
+                timeout=90
+            )
+        print("-> Video berhasil terkirim ke Telegram!")
+    except Exception as e:
+        print(f"Gagal mengirim ke Telegram: {e}")
+
+# ==========================================
+# 7. Publikasi Instagram Reels (Meta Graph API)
+# ==========================================
+def post_instagram_reels(video_path, caption_text):
+    """Mengunggah video reels langsung ke Instagram via Resumable Upload"""
+    if not (FB_TOKEN and IG_USER_ID):
+        print("Kredensial Instagram belum lengkap, lewati posting Instagram.")
+        return
+
+    try:
+        print("Menginisialisasi sesi Reels di Meta Graph API...")
+        # Inisialisasi wadah video
+        init_url = f"https://graph.facebook.com/v19.0/{IG_USER_ID}/media"
+        init_params = {
+            "media_type": "REELS",
+            "upload_type": "resumable",
+            "caption": caption_text,
+            "access_token": FB_TOKEN
+        }
+        r_init = requests.post(init_url, data=init_params, timeout=20).json()
+        video_id = r_init.get("id")
+        upload_uri = r_init.get("uri")
+
+        if not upload_uri:
+            print(f"Gagal membuka sesi Reels: {r_init}")
+            return
+
+        # Unggah biner video langsung ke server Meta
+        print("Mengunggah berkas video ke Meta CDN...")
+        with open(video_path, "rb") as f:
+            video_data = f.read()
+
+        headers = {
+            "Authorization": f"OAuth {FB_TOKEN}",
+            "offset": "0",
+            "file_size": str(len(video_data))
+        }
+        requests.post(upload_uri, headers=headers, data=video_data, timeout=120)
+
+        # Polling status pemrosesan video di server Meta
+        print("Menunggu server Meta memproses video...")
+        status_url = f"https://graph.facebook.com/v19.0/{video_id}?fields=status_code&access_token={FB_TOKEN}"
+        for _ in range(12):
+            time.sleep(10)
+            status_res = requests.get(status_url, timeout=10).json()
+            kode_status = status_res.get("status_code")
+            print(f"Status pemrosesan Meta: {kode_status}")
+            if kode_status == "FINISHED":
+                break
+            elif kode_status == "ERROR":
+                print("Server Meta gagal memproses video.")
+                return
+
+        # Terbitkan video ke publik
+        print("Menerbitkan video ke feed Instagram...")
+        pub_url = f"https://graph.facebook.com/v19.0/{IG_USER_ID}/media_publish"
+        pub_res = requests.post(pub_url, data={"creation_id": video_id, "access_token": FB_TOKEN}, timeout=20).json()
+        print("-> SUKSES! Instagram Reels resmi tayang. ID Konten:", pub_res.get("id"))
+
+    except Exception as e:
+        print(f"Kendala saat posting Instagram Reels: {e}")
+
+# ==========================================
+# Alur Eksekusi Utama
 # ==========================================
 def main():
     target = get_species_target()
@@ -261,6 +350,17 @@ def main():
     naskah = generate_english_script(target)
     asyncio.run(create_audio_and_clean_subtitles(naskah))
     render_multi_photo_reels(photos)
+
+    # Naskah takarir (caption) bahasa Inggris untuk target audiens luar negeri
+    caption = (
+        f"The hidden wildlife of Java: {target}.\n\n"
+        f"{naskah}\n\n"
+        f"#wildlife #indonesia #nature #documentary #indobizarre #javanwildlife #biodiversity"
+    )
+
+    # Distribusi otomatis serentak
+    send_to_telegram(FILE_FINAL, caption)
+    post_instagram_reels(FILE_FINAL, caption)
 
 if __name__ == "__main__":
     main()
