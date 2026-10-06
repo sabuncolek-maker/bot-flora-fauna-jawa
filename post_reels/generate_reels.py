@@ -98,7 +98,7 @@ def get_species_target():
 def download_3_photos(scientific_name):
     urls = []
     try:
-        url_inat = f"https://api.inaturalist.org/v1/observations?taxon_name={requests.utils.quote(scientific_name)}&has[]=photos&quality_grade=research&per_page=10"
+        url_inat = f"https://api.inaturalist.org/v1/observations?taxon_name={requests.utils.quote(scientific_name)}&has[]=photos&quality_grade=research&license=cc0,cc-by&per_page=10"
         res_inat = requests.get(url_inat, headers=HEADERS_BROWSER, timeout=10).json()
         for item in res_inat.get("results", []):
             for photo in item.get("photos", []):
@@ -410,7 +410,9 @@ def post_facebook_reels(video_path, caption_text):
 # ==========================================
 def main():
     # Jeda acak singkat (10 detik) agar saat dites manual tidak menunggu lama
-    time.sleep(10)
+    jeda_detik = random.randint(60, 480)
+    print(f"Menunggu jeda alami selama {jeda_detik} detik sebelum memproses...")
+    time.sleep(jeda_detik)
 
     target = get_species_target()
     print(f"Target Spesies Reels: {target}")
