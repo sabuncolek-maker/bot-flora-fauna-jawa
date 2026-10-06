@@ -8,3 +8,4 @@ Gonocephalus kuhlii
 Mycteria cinerea
 Macaca fascicularis
 Coffea arabica
+Microhyla orientalis
