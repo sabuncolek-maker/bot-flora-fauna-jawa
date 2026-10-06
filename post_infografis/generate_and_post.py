@@ -242,27 +242,29 @@ system_prompt = (
 )
 
 user_prompt = f"""
-Riset spesies ini: '{selected_latin}'.
-Tentukan apakah ini FLORA (tumbuhan) atau FAUNA (hewan), sebutkan status konservasinya, nama lokal/populernya di Indonesia, lokasi alamnya di Jawa, serta 3 fakta serunya.
+Lakukan riset biologis yang SANGAT AKURAT untuk spesies ini: '{selected_latin}'.
+PENTING: Jangan berhalusinasi. Pastikan nama lokal/Indonesia yang kamu berikan benar-benar pasangan yang sah dari nama latin tersebut (Misal: jika latinnya Leucopsar rothschildi, maka namanya harus Jalak Bali, BUKAN Elang Jawa).
+
+Tentukan apakah ini FLORA (tumbuhan) atau FAUNA (hewan), sebutkan status konservasinya, nama lokalnya yang paling valid, lokasi alamnya di Jawa/Indonesia, serta 3 fakta serunya.
 
 Kaidah isi:
-1. 'iucn_status': Isi status kelangkaan dalam bahasa Indonesia yang ringkas, contoh: 'Kritis (CR)', 'Genting (EN)', 'Rentan (VU)', 'Risiko Rendah (LC)', atau 'Belum Dievaluasi'.
-2. 'facts': Buat 3 fakta unik yang ceritanya enak dibaca orang biasa. Penjelasannya padat, maksimal 20 kata per fakta.
-3. 'fb_caption': Tulis naskah postingan Facebook yang ramah, santai, sisipkan fakta status kelangkaannya, ajakan menjaga alam, emotikon, dan hashtag relevan.
+1. 'iucn_status': Isi status kelangkaan dalam bahasa Indonesia yang ringkas, contoh: 'Kritis (CR)', 'Genting (EN)'.
+2. 'facts': Buat 3 fakta unik yang ceritanya enak dibaca orang biasa. Penjelasannya padat, maksimal 20 kata per fakta. Pastikan faktanya relevan dengan wujud asli spesies tersebut!
+3. 'fb_caption': Tulis naskah postingan Facebook yang ramah, santai, sisipkan fakta kelangkaan dan hashtag relevan.
 
 Ikuti format JSON persis seperti ini:
 {{
   "category": "FLORA atau FAUNA",
   "iucn_status": "Contoh: Genting (EN)",
-  "name": "Nama Indonesia/Umum yang Akrab Didengar",
+  "name": "Nama Indonesia Valid (Jangan Mengarang)",
   "latin_name": "{selected_latin}",
   "habitat": "Contoh: Hutan Lindung Gunung Slamet, TN Ujung Kulon, dll",
   "facts": [
-    {{"title": "Judul Fakta 1", "desc": "Penjelasan ringkas dan asyik maksimal 20 kata"}},
-    {{"title": "Judul Fakta 2", "desc": "Penjelasan ringkas dan asyik maksimal 20 kata"}},
-    {{"title": "Judul Fakta 3", "desc": "Penjelasan ringkas dan asyik maksimal 20 kata"}}
+    {{"title": "Judul Fakta 1", "desc": "Penjelasan ringkas maksimal 20 kata"}},
+    {{"title": "Judul Fakta 2", "desc": "Penjelasan ringkas maksimal 20 kata"}},
+    {{"title": "Judul Fakta 3", "desc": "Penjelasan ringkas maksimal 20 kata"}}
   ],
-  "fb_caption": "Naskah lengkap caption Facebook santai dan membumi"
+  "fb_caption": "Naskah lengkap caption Facebook"
 }}
 """
 
