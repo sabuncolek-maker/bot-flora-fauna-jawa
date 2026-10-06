@@ -3,12 +3,12 @@ name: Auto Post Flora Fauna Jawa
 on:
   workflow_dispatch:
   schedule:
-    # 07:00 WIB (00:00 UTC) - Waktu sarapan
-    - cron: '0 0 * * *'
-    # 12:30 WIB (05:30 UTC) - Istirahat makan siang
-    - cron: '30 5 * * *'
-    # 19:30 WIB (12:30 UTC) - Jam santai malam
-    - cron: '30 12 * * *'
+    # Jam 07:14 WIB (00:14 UTC - geser 14 menit agar lepas dari antrean midnight)
+    - cron: '14 0 * * *'
+    # Jam 12:38 WIB (05:38 UTC)
+    - cron: '38 5 * * *'
+    # Jam 19:42 WIB (12:42 UTC)
+    - cron: '42 12 * * *'
 
 jobs:
   run-bot:
