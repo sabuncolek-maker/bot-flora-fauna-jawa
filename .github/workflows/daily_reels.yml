@@ -9,7 +9,6 @@ on:
     - cron: '43 19 * * *'
     # 05:21 WIB (22:21 UTC - dimajukan agar sebelum jam 6 pagi sudah selesai)
     - cron: '21 22 * * *'
-  workflow_dispatch:
 
 permissions:
   contents: write
