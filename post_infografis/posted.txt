@@ -10,3 +10,4 @@ Macaca fascicularis
 Coffea arabica
 Microhyla orientalis
 Acridotheres javanicus
+Leptophryne javanica
