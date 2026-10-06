@@ -16,6 +16,11 @@ FB_ACCESS_TOKEN = str(os.environ.get("FB_PAGE_ACCESS_TOKEN") or "").strip()
 TELEGRAM_BOT_TOKEN = str(os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
 TELEGRAM_CHAT_ID = str(os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
 
+# Jeda acak alami (1 sampai 8 menit)
+jeda_detik = random.randint(60, 480)
+print(f"Menunggu jeda alami selama {jeda_detik} detik...")
+time.sleep(jeda_detik)
+
 if not GROQ_KEY or not FB_PAGE_ID or not FB_ACCESS_TOKEN:
     raise ValueError("Error: Kunci rahasia (GROQ_API_KEY, FB_PAGE_ID, FB_PAGE_ACCESS_TOKEN) belum lengkap diatur di GitHub Secrets!")
 
@@ -101,7 +106,7 @@ print(f"Target spesies hari ini: {selected_latin}")
 def fetch_inaturalist_image(latin_name):
     """Mencari foto observasi satwa liar asli dari API iNaturalist"""
     try:
-        url = f"https://api.inaturalist.org/v1/taxa?q={requests.utils.quote(latin_name)}&locale=id"
+        url = f"https://api.inaturalist.org/v1/taxa?q={requests.utils.quote(latin_name)}&locale=id&license=cc0,cc-by"
         r = requests.get(url, timeout=10)
         if r.status_code == 200:
             res_data = r.json()
