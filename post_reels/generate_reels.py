@@ -93,26 +93,26 @@ def get_species_target():
     return random.choice(sisa if sisa else cadangan)
 
 # ==========================================
-# 3. Ambil 3 Foto Alam Liar (iNaturalist & Wiki)
+# 3. Ambil 6 Foto Alam Liar (iNaturalist & Wiki)
 # ==========================================
-def download_3_photos(scientific_name):
+def download_6_photos(scientific_name):
     urls = []
     try:
-        url_inat = f"https://api.inaturalist.org/v1/observations?taxon_name={requests.utils.quote(scientific_name)}&has[]=photos&quality_grade=research&license=cc0,cc-by&per_page=10"
+        url_inat = f"https://api.inaturalist.org/v1/observations?taxon_name={requests.utils.quote(scientific_name)}&has[]=photos&quality_grade=research&license=cc0,cc-by&per_page=15"
         res_inat = requests.get(url_inat, headers=HEADERS_BROWSER, timeout=10).json()
         for item in res_inat.get("results", []):
             for photo in item.get("photos", []):
                 link = photo.get("url", "").replace("square", "large")
                 if link and link not in urls:
                     urls.append(link)
-                if len(urls) >= 3:
+                if len(urls) >= 6:
                     break
-            if len(urls) >= 3:
+            if len(urls) >= 6:
                 break
     except Exception as e:
         print(f"Kendala iNaturalist: {e}")
 
-    if len(urls) < 3:
+    if len(urls) < 6:
         try:
             url_wiki = f"https://en.wikipedia.org/api/rest_v1/page/summary/{requests.utils.quote(scientific_name)}"
             r = requests.get(url_wiki, headers=HEADERS_BROWSER, timeout=10).json()
@@ -127,16 +127,19 @@ def download_3_photos(scientific_name):
     cadangan = [
         "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1080",
         "https://images.unsplash.com/photo-1448375240586-882707db888b?w=1080",
-        "https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?w=1080"
+        "https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?w=1080",
+        "https://images.unsplash.com/photo-1425934398893-310a00990186?w=1080",
+        "https://images.unsplash.com/photo-1501854140801-50d01698950b?w=1080",
+        "https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=1080"
     ]
     for c in cadangan:
-        if len(urls) >= 3:
+        if len(urls) >= 6:
             break
         if c not in urls:
             urls.append(c)
 
     saved_files = []
-    for idx, img_url in enumerate(urls[:3], start=1):
+    for idx, img_url in enumerate(urls[:6], start=1):
         file_path = os.path.join(BASE_DIR, f"foto_{idx}.jpg")
         try:
             r = requests.get(img_url, headers=HEADERS_BROWSER, timeout=15)
@@ -218,7 +221,7 @@ async def create_audio_and_clean_subtitles(text):
     print("Audio MP3 dan Subtitle SRT selesai dibuat!")
 
 # ==========================================
-# 6. Render Video 3 Foto & Hardsub (FFmpeg)
+# 6. Render Video 6 Foto & Hardsub (FFmpeg)
 # ==========================================
 def render_multi_photo_reels(photo_files):
     clip_files = []
@@ -229,13 +232,13 @@ def render_multi_photo_reels(photo_files):
             "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=25:5[bg];"
             "[0:v]scale=1080:1920:force_original_aspect_ratio=decrease[fg];"
             "[bg][fg]overlay=(W-w)/2:(H-h)/2,"
-            "zoompan=z='min(zoom+0.0006,1.08)':d=250:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=25"
+            "zoompan=z='min(zoom+0.0006,1.08)':d=125:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=25" # Berubah jadi d=125
         )
         cmd_clip = [
             "ffmpeg", "-y",
             "-loop", "1",
             "-i", photo,
-            "-t", "10",
+            "-t", "5", # Berubah jadi 5 detik
             "-filter_complex", filter_str,
             "-c:v", "libx264",
             "-pix_fmt", "yuv420p",
@@ -417,7 +420,7 @@ def main():
     target = get_species_target()
     print(f"Target Spesies Reels: {target}")
 
-    photos = download_3_photos(target)
+    photos = download_6_photos(target)
     naskah = generate_english_script(target)
     asyncio.run(create_audio_and_clean_subtitles(naskah))
     render_multi_photo_reels(photos)
