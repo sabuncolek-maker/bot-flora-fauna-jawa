@@ -7,4 +7,4 @@ Phalacrocorax sulcirostris
 Gonocephalus kuhlii
 Mycteria cinerea
 Macaca fascicularis
-Microhyla orientalis
+
