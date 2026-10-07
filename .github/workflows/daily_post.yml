@@ -58,4 +58,4 @@ jobs:
           git add post_infografis/posted.txt
           # [skip ci] mencegah server memicu tugas berulang saat file riwayat disimpan
           git commit -m "Update riwayat spesies harian [skip ci]" || exit 0
-          git push
+          git pull --rebase origin main && git push
