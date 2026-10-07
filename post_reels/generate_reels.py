@@ -177,6 +177,34 @@ def generate_english_script(scientific_name):
     print(f"Naskah Narasi:\n{naskah}\n")
     return naskah
 
+def generate_hook_text(scientific_name):
+    """
+    Membuat teks hook (pancingan) untuk 3 detik pertama video.
+    Apa itu: kalimat pendek provokatif yang muncul besar di layar pembuka.
+    Kenapa: penonton memutuskan lanjut nonton atau scroll dalam 3 detik
+    pertama. Hook yang kuat menaikkan retensi video secara signifikan.
+    """
+    try:
+        client = Groq(api_key=GROQ_KEY)
+        prompt = f"""
+        Write ONE short punchy hook question in English about '{scientific_name}' from Java.
+        Rules: max 8 words, curiosity-driven, no question mark needed at end is fine.
+        Examples: "Did you know this predator", "The ghost of Java forests"
+        Return ONLY the hook text, nothing else.
+        """
+        completion = client.chat.completions.create(
+            model="openai/gpt-oss-120b",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7,
+            max_tokens=30,
+        )
+        hook = completion.choices[0].message.content.strip().replace('"', '')
+        print(f"Hook: {hook}")
+        return hook
+    except Exception as e:
+        print(f"Gagal buat hook, pakai bawaan: {e}")
+        return "Did you know?"
+
 # ==========================================
 # 5. Audio & Subtitle Per Kalimat (Edge-TTS)
 # ==========================================
@@ -223,7 +251,7 @@ async def create_audio_and_clean_subtitles(text):
 # ==========================================
 # 6. Render Video 6 Foto & Hardsub (FFmpeg)
 # ==========================================
-def render_multi_photo_reels(photo_files):
+def render_multi_photo_reels(photo_files, hook_text="Did you know?"):
     """
     Render reels dengan 3 perbaikan agar tidak kaku:
     1. GERAKAN BERVARIASI - tiap foto dapat gerakan kamera acak
@@ -232,6 +260,12 @@ def render_multi_photo_reels(photo_files):
        tidak lagi patah seperti guntingan
     3. DURASI BERVARIASI - tiap foto tampil 3-6 detik secara acak,
        tidak monoton 5 detik semua
+
+    Ditambah 2 fitur baru:
+    4. HOOK TEXT - teks besar muncul 3.5 detik pertama untuk menahan
+       perhatian penonton sebelum mereka scroll
+    5. MUSIK LATAR ALAM - suara angin lembut (brown noise) di bawah
+       narasi agar video terasa hidup, bukan hening
     """
     # --- Pilihan gerakan kamera (efek Ken Burns) ---
     # 'on' = nomor frame yang sedang diproses (untuk animasi per frame)
@@ -285,7 +319,20 @@ def render_multi_photo_reels(photo_files):
     filter_parts.append(xfade)
     label_akhir = f"[x{len(photo_files)-1}]"
 
-    # --- Langkah 3: tambah subtitle, audio, render final ---
+    # --- Langkah 3: hook text + subtitle + musik latar + render final ---
+    # Hook: teks besar di 3.5 detik pertama
+    # Apa itu drawtext: filter ffmpeg untuk menulis teks langsung di video.
+    # enable='lt(t,3.5)' artinya teks hanya muncul saat waktu video < 3.5 detik.
+    hook_bersih = hook_text.replace("'", "").replace(":", " ")[:60]
+    hook_filter = (
+        f"drawtext=font='DejaVu Sans':text='{hook_bersih}':"
+        f"fontsize=72:fontcolor=white:borderw=3:bordercolor=black@0.8:"
+        f"x=(w-text_w)/2:y=h*0.30:enable='lt(t,3.5)',"
+        f"drawtext=font='DejaVu Sans':text='SWIPE UP FOR MORE':"
+        f"fontsize=36:fontcolor=white@0.9:borderw=2:bordercolor=black@0.8:"
+        f"x=(w-text_w)/2:y=h*0.38:enable='lt(t,3.5)'"
+    )
+
     sub_filter = (
         "subtitles=narasi.srt:force_style='Alignment=2\\,"
         "FontSize=8\\,"
@@ -297,14 +344,29 @@ def render_multi_photo_reels(photo_files):
         "MarginV=25'"
     )
 
-    full_filter = ";".join(filter_parts) + f";{label_akhir}{sub_filter}[vout]"
+    # Musik latar: brown noise (suara dengung rendah seperti angin)
+    # difilter lowpass agar halus, volume sangat kecil (0.05).
+    # Kenapa brown noise: terdengar alami seperti angin/gemerisik,
+    # dibuat langsung oleh ffmpeg (tidak butuh file eksternal,
+    # bebas masalah hak cipta), dan selalu tersedia.
+    ambient_filter = (
+        "anoisesrc=color=brown:duration=40:sample_rate=44100[noise];"
+        "[noise]lowpass=f=400,volume=0.05[amb]"
+    )
+
+    full_filter = (
+        ";".join(filter_parts) + f";{label_akhir}{hook_filter},{sub_filter}[vout];"
+        + ambient_filter + ";[aud_in][amb]amix=inputs=2:duration=first[aout]"
+    )
 
     idx_audio = len(photo_files)
     cmd += ["-i", FILE_AUDIO]
+    # Beri label pada audio input agar bisa dirujuk di filter
+    full_filter = full_filter.replace("[aud_in]", f"[{idx_audio}:a]")
     cmd += [
         "-filter_complex", full_filter,
         "-map", "[vout]",
-        "-map", f"{idx_audio}:a",
+        "-map", "[aout]",  # audio campuran: narasi + musik latar
         "-c:v", "libx264",
         "-pix_fmt", "yuv420p",
         "-c:a", "aac",
@@ -459,8 +521,9 @@ def main():
 
     photos = download_6_photos(target)
     naskah = generate_english_script(target)
+    hook = generate_hook_text(target)
     asyncio.run(create_audio_and_clean_subtitles(naskah))
-    render_multi_photo_reels(photos)
+    render_multi_photo_reels(photos, hook_text=hook)
 
     caption = (
         f"The hidden wildlife of Java: {target}.\n\n"
