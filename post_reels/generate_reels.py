@@ -267,6 +267,12 @@ def render_multi_photo_reels(photo_files, hook_text="Did you know?"):
     5. MUSIK LATAR ALAM - suara angin lembut (brown noise) di bawah
        narasi agar video terasa hidup, bukan hening
     """
+    # Pengaman: butuh minimal 2 foto (1 foto tidak bisa dibuat transisi xfade)
+    if len(photo_files) < 2:
+        raise RuntimeError(
+            f"Butuh minimal 2 foto untuk render reels, hanya dapat {len(photo_files)}. "
+            "Kemungkinan download foto gagal (jaringan/API sumber foto bermasalah)."
+        )
     # --- Pilihan gerakan kamera (efek Ken Burns) ---
     # 'on' = nomor frame output yang sedang diproses (0 sampai d-1)
     # Kecepatan dibuat halus (0.0008) agar tidak geter
@@ -328,7 +334,15 @@ def render_multi_photo_reels(photo_files, hook_text="Did you know?"):
     # Hook: teks besar di 3.5 detik pertama
     # Apa itu drawtext: filter ffmpeg untuk menulis teks langsung di video.
     # enable='lt(t,3.5)' artinya teks hanya muncul saat waktu video < 3.5 detik.
-    hook_bersih = hook_text.replace("'", "").replace(":", " ")[:60]
+    #
+    # Sanitasi: teks dari AI bisa mengandung karakter spesial yang merusak
+    # sintaks filter_complex ffmpeg (,[]\;:%). Semua di-escape agar aman.
+    # Backslash harus diproses PERTAMA agar tidak double-escape.
+    hook_bersih = hook_text[:60]
+    for char_lama, char_baru in [("\\", "\\\\"), ("'", ""), (",", "\\,"),
+                                  ("[", "\\["), ("]", "\\]"), (";", "\\;"),
+                                  (":", "\\:"), ("%", "\\%")]:
+        hook_bersih = hook_bersih.replace(char_lama, char_baru)
     hook_filter = (
         f"drawtext=font='DejaVu Sans':text='{hook_bersih}':"
         f"fontsize=72:fontcolor=white:borderw=3:bordercolor=black@0.8:"
@@ -408,7 +422,7 @@ def send_to_telegram(video_path, caption_text):
 # ==========================================
 def get_instagram_id():
     try:
-        url = f"https://graph.facebook.com/v19.0/{FB_PAGE_ID}?fields=instagram_business_account&access_token={FB_TOKEN}"
+        url = f"https://graph.facebook.com/v21.0/{FB_PAGE_ID}?fields=instagram_business_account&access_token={FB_TOKEN}"
         res = requests.get(url, timeout=10).json()
         ig_id = res.get("instagram_business_account", {}).get("id")
         return ig_id
@@ -420,13 +434,17 @@ def get_instagram_id():
 # 9. Publikasi Instagram Reels
 # ==========================================
 def post_instagram_reels(video_path, caption_text, ig_id):
+    """
+    Posting reels ke Instagram. Mengembalikan True jika sukses, False jika gagal.
+    History hanya dicatat jika posting berhasil (lihat main()).
+    """
     if not ig_id:
         print("ID Instagram tidak ditemukan. Melewati posting Instagram.")
-        return
+        return True  # bukan kegagalan, hanya dilewati
 
     try:
         print(f"Menginisialisasi Instagram Reels (IG ID: {ig_id})...")
-        init_url = f"https://graph.facebook.com/v19.0/{ig_id}/media"
+        init_url = f"https://graph.facebook.com/v21.0/{ig_id}/media"
         init_params = {
             "media_type": "REELS",
             "upload_type": "resumable",
@@ -440,7 +458,7 @@ def post_instagram_reels(video_path, caption_text, ig_id):
 
         if not upload_uri:
             print(f"Gagal inisialisasi IG Reels: {r_init}")
-            return
+            return False
 
         with open(video_path, "rb") as f:
             video_data = f.read()
@@ -453,37 +471,46 @@ def post_instagram_reels(video_path, caption_text, ig_id):
         requests.post(upload_uri, headers=headers, data=video_data, timeout=120)
 
         print("Menunggu proses render di server Meta...")
-        status_url = f"https://graph.facebook.com/v19.0/{video_id}?fields=status_code&access_token={FB_TOKEN}"
+        status_url = f"https://graph.facebook.com/v21.0/{video_id}?fields=status_code&access_token={FB_TOKEN}"
         for _ in range(12):
             time.sleep(10)
             status_res = requests.get(status_url, timeout=10).json()
             if status_res.get("status_code") == "FINISHED":
                 break
 
-        pub_url = f"https://graph.facebook.com/v19.0/{ig_id}/media_publish"
+        pub_url = f"https://graph.facebook.com/v21.0/{ig_id}/media_publish"
         pub_res = requests.post(pub_url, data={"creation_id": video_id, "access_token": FB_TOKEN}, timeout=20).json()
-        print("-> SUKSES! Instagram Reels terbit. ID:", pub_res.get("id"))
+        if pub_res.get("id"):
+            print("-> SUKSES! Instagram Reels terbit. ID:", pub_res.get("id"))
+            return True
+        print(f"Gagal publish IG Reels: {pub_res}")
+        return False
     except Exception as e:
         print(f"Kendala posting Instagram Reels: {e}")
+        return False
 
 # ==========================================
 # 10. Publikasi Facebook Reels
 # ==========================================
 def post_facebook_reels(video_path, caption_text):
+    """
+    Posting reels ke Facebook. Mengembalikan True jika sukses, False jika gagal.
+    History hanya dicatat jika posting berhasil (lihat main()).
+    """
     if not (FB_TOKEN and FB_PAGE_ID):
         print("Kredensial Facebook belum lengkap, lewati posting FB.")
-        return
+        return True  # bukan kegagalan, hanya dilewati
 
     try:
         print("Menginisialisasi Facebook Reels...")
-        init_url = f"https://graph.facebook.com/v19.0/{FB_PAGE_ID}/video_reels"
+        init_url = f"https://graph.facebook.com/v21.0/{FB_PAGE_ID}/video_reels"
         r_init = requests.post(init_url, data={"upload_phase": "start", "access_token": FB_TOKEN}, timeout=20).json()
         video_id = r_init.get("video_id")
         upload_url = r_init.get("upload_url")
 
         if not upload_url:
             print(f"Gagal inisialisasi FB Reels: {r_init}")
-            return
+            return False
 
         with open(video_path, "rb") as f:
             video_data = f.read()
@@ -496,7 +523,7 @@ def post_facebook_reels(video_path, caption_text):
         requests.post(upload_url, headers=headers, data=video_data, timeout=120)
 
         print("Menerbitkan Facebook Reels ke Halaman...")
-        publish_url = f"https://graph.facebook.com/v19.0/{FB_PAGE_ID}/video_reels"
+        publish_url = f"https://graph.facebook.com/v21.0/{FB_PAGE_ID}/video_reels"
         pub_params = {
             "upload_phase": "finish",
             "access_token": FB_TOKEN,
@@ -507,10 +534,12 @@ def post_facebook_reels(video_path, caption_text):
         r_pub = requests.post(publish_url, data=pub_params, timeout=20).json()
         if r_pub.get("success"):
             print("-> SUKSES! Facebook Reels terbit di Halaman FB!")
-        else:
-            print(f"Respon penerbitan FB Reels: {r_pub}")
+            return True
+        print(f"Respon penerbitan FB Reels: {r_pub}")
+        return False
     except Exception as e:
         print(f"Kendala posting Facebook Reels: {e}")
+        return False
 
 # ==========================================
 # Alur Utama
@@ -537,14 +566,20 @@ def main():
     )
 
     send_to_telegram(FILE_FINAL, caption)
-    post_facebook_reels(FILE_FINAL, caption)
+    fb_ok = post_facebook_reels(FILE_FINAL, caption)
 
+    ig_ok = True
     ig_id = get_instagram_id()
     if ig_id:
-        post_instagram_reels(FILE_FINAL, caption, ig_id)
+        ig_ok = post_instagram_reels(FILE_FINAL, caption, ig_id)
 
-    save_to_history(target)
-    print("Spesies resmi dicatat ke history_reels.json!")
+    # Catat history HANYA jika semua posting berhasil.
+    # Kalau ada yang gagal, spesies tidak dicatat agar bisa dicoba lagi lain waktu.
+    if fb_ok and ig_ok:
+        save_to_history(target)
+        print("Spesies resmi dicatat ke history_reels.json!")
+    else:
+        print("Posting belum lengkap, history TIDAK dicatat - akan dicoba lagi lain waktu.")
 
 if __name__ == "__main__":
     main()
