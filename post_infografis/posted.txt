@@ -11,3 +11,4 @@ Coffea arabica
 Microhyla orientalis
 Acridotheres javanicus
 Leptophryne javanica
+Hibiscus rosa-sinensis
