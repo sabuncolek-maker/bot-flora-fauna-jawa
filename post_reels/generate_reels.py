@@ -251,21 +251,17 @@ async def create_audio_and_clean_subtitles(text):
 # ==========================================
 # 6. Render Video 6 Foto & Hardsub (FFmpeg)
 # ==========================================
-def render_multi_photo_reels(photo_files, hook_text="Did you know?"):
+def render_multi_photo_reels(photo_files):
     """
-    Render reels dengan 3 perbaikan agar tidak kaku:
-    1. GERAKAN BERVARIASI - tiap foto dapat gerakan kamera acak
-       (zoom masuk / zoom keluar / geser kanan / geser kiri)
-    2. TRANSISI HALUS - antar foto ada efek fade 0.5 detik (xfade),
-       tidak lagi patah seperti guntingan
-    3. DURASI BERVARIASI - tiap foto tampil 3-6 detik secara acak,
-       tidak monoton 5 detik semua
-
-    Ditambah 2 fitur baru:
-    4. HOOK TEXT - teks besar muncul 3.5 detik pertama untuk menahan
-       perhatian penonton sebelum mereka scroll
-    5. MUSIK LATAR ALAM - suara angin lembut (brown noise) di bawah
-       narasi agar video terasa hidup, bukan hening
+    Render reels:
+    1. BACKGROUND BLUR - gambar tampil UTUH (fit) di atas background blur,
+       tidak dipotong seperti sebelumnya
+    2. GERAKAN HALUS - zoom sangat perlahan (di-upscale 2x dulu agar
+       tidak geter), 2 variasi: zoom masuk / zoom keluar
+    3. TRANSISI FADE - antar foto ada efek fade 0.5 detik
+    4. DURASI BERVARIASI - tiap foto 3-6 detik acak
+    5. MUSIK LATAR ALAM - brown noise lembut di bawah narasi
+    (Hook text dimatikan atas permintaan user)
     """
     # Pengaman: butuh minimal 2 foto (1 foto tidak bisa dibuat transisi xfade)
     if len(photo_files) < 2:
@@ -273,18 +269,15 @@ def render_multi_photo_reels(photo_files, hook_text="Did you know?"):
             f"Butuh minimal 2 foto untuk render reels, hanya dapat {len(photo_files)}. "
             "Kemungkinan download foto gagal (jaringan/API sumber foto bermasalah)."
         )
-    # --- Pilihan gerakan kamera (efek Ken Burns) ---
-    # 'on' = nomor frame output yang sedang diproses (0 sampai d-1)
-    # Kecepatan dibuat halus (0.0008) agar tidak geter
+    # --- Gerakan kamera: hanya 2, sangat halus ---
+    # 'on' = nomor frame output (0 sampai d-1)
+    # Trik anti-geter: gambar di-upscale 2x DULU sebelum zoompan,
+    # sehingga langkah zoom-nya jauh lebih halus
     GERAKAN_KAMERA = [
-        # 1. Zoom masuk perlahan ke tengah
-        "z='min(1+0.0008*on\\,1.2)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'",
-        # 2. Zoom keluar perlahan dari tengah
-        "z='max(1.2-0.0008*on\\,1.0)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'",
-        # 3. Geser ke kanan perlahan
-        "z='1.2':x='(iw-iw/zoom)*on/150':y='ih/2-(ih/zoom/2)'",
-        # 4. Geser ke kiri perlahan
-        "z='1.2':x='(iw-iw/zoom)*(1-on/150)':y='ih/2-(ih/zoom/2)'",
+        # Zoom masuk sangat perlahan (1.0 -> ~1.09)
+        "z='1+0.0006*on':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'",
+        # Zoom keluar sangat perlahan (~1.09 -> 1.0)
+        "z='max(1.09-0.0006*on\\,1.0)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'",
     ]
 
     DURASI_FADE = 0.5  # durasi transisi antar foto (detik)
@@ -307,12 +300,15 @@ def render_multi_photo_reels(photo_files, hook_text="Did you know?"):
 
         cmd += ["-i", photo]
 
+        # Background: isi penuh frame + blur
+        # Foreground: tampil UTUH (decrease = fit, tidak dipotong)
+        # Lalu composite di-upscale 2x sebelum zoompan agar gerakan halus
         filter_parts.append(
             f"[{idx}:v]scale=1080:1920:force_original_aspect_ratio=increase,"
-            f"crop=1080:1920,boxblur=20:5[bg{idx}];"
-            f"[{idx}:v]scale=1080:1920:force_original_aspect_ratio=increase,"
-            f"crop=1080:1920[fg{idx}];"
+            f"crop=1080:1920,boxblur=15:3[bg{idx}];"
+            f"[{idx}:v]scale=1080:1920:force_original_aspect_ratio=decrease[fg{idx}];"
             f"[bg{idx}][fg{idx}]overlay=(W-w)/2:(H-h)/2,"
+            f"scale=2160:3840,"
             f"zoompan={gerakan}:d={frames}:s=1080x1920:fps={FPS},"
             f"settb=AVTB[v{idx}]"
         )
@@ -330,27 +326,8 @@ def render_multi_photo_reels(photo_files, hook_text="Did you know?"):
     filter_parts.append(xfade)
     label_akhir = f"[x{len(photo_files)-1}]"
 
-    # --- Langkah 3: hook text + subtitle + musik latar + render final ---
-    # Hook: teks besar di 3.5 detik pertama
-    # Apa itu drawtext: filter ffmpeg untuk menulis teks langsung di video.
-    # enable='lt(t,3.5)' artinya teks hanya muncul saat waktu video < 3.5 detik.
-    #
-    # Sanitasi: teks dari AI bisa mengandung karakter spesial yang merusak
-    # sintaks filter_complex ffmpeg (,[]\;:%). Semua di-escape agar aman.
-    # Backslash harus diproses PERTAMA agar tidak double-escape.
-    hook_bersih = hook_text[:60]
-    for char_lama, char_baru in [("\\", "\\\\"), ("'", ""), (",", "\\,"),
-                                  ("[", "\\["), ("]", "\\]"), (";", "\\;"),
-                                  (":", "\\:"), ("%", "\\%")]:
-        hook_bersih = hook_bersih.replace(char_lama, char_baru)
-    hook_filter = (
-        f"drawtext=font='DejaVu Sans':text='{hook_bersih}':"
-        f"fontsize=72:fontcolor=white:borderw=3:bordercolor=black@0.8:"
-        f"x=(w-text_w)/2:y=h*0.30:enable='lt(t,3.5)',"
-        f"drawtext=font='DejaVu Sans':text='SWIPE UP FOR MORE':"
-        f"fontsize=36:fontcolor=white@0.9:borderw=2:bordercolor=black@0.8:"
-        f"x=(w-text_w)/2:y=h*0.38:enable='lt(t,3.5)'"
-    )
+    # --- Langkah 3: subtitle + musik latar + render final ---
+    # (Hook text dimatikan atas permintaan user)
 
     sub_filter = (
         "subtitles=narasi.srt:force_style='Alignment=2\\,"
@@ -374,7 +351,7 @@ def render_multi_photo_reels(photo_files, hook_text="Did you know?"):
     )
 
     full_filter = (
-        ";".join(filter_parts) + f";{label_akhir}{hook_filter},{sub_filter}[vout];"
+        ";".join(filter_parts) + f";{label_akhir}{sub_filter}[vout];"
         + ambient_filter + ";[aud_in][amb]amix=inputs=2:duration=first[aout]"
     )
 
@@ -555,9 +532,8 @@ def main():
 
     photos = download_6_photos(target)
     naskah = generate_english_script(target)
-    hook = generate_hook_text(target)
     asyncio.run(create_audio_and_clean_subtitles(naskah))
-    render_multi_photo_reels(photos, hook_text=hook)
+    render_multi_photo_reels(photos)
 
     caption = (
         f"The hidden wildlife of Java: {target}.\n\n"
