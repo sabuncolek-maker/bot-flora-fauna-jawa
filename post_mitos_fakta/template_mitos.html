@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+  body {
+    width: 1080px; height: 1080px;
+    display: flex; flex-direction: column;
+    justify-content: center; align-items: center;
+    padding: 60px; text-align: center;
+    color: #fff;
+  }
+  /* Slide 1: Cover */
+  body.cover { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%); }
+  /* Slide 2: Mitos (merah) */
+  body.mitos { background: linear-gradient(135deg, #3d0c0c 0%, #6e1423 50%, #8b1a1a 100%); }
+  /* Slide 3: Fakta (hijau) */
+  body.fakta { background: linear-gradient(135deg, #0c3d1a 0%, #14532d 50%, #1a6b3c 100%); }
+  /* Slide 4: Penutup */
+  body.penutup { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%); }
+
+  .label {
+    font-size: 42px; font-weight: 800; letter-spacing: 6px;
+    padding: 12px 40px; border-radius: 50px; margin-bottom: 40px;
+  }
+  .cover .label { background: #e94560; }
+  .mitos .label { background: #ff4444; }
+  .fakta .label { background: #22c55e; color: #0c3d1a; }
+  .penutup .label { background: #e94560; }
+
+  .judul { font-size: 64px; font-weight: 800; line-height: 1.2; margin-bottom: 30px; max-width: 900px; }
+  .isi { font-size: 38px; line-height: 1.5; max-width: 880px; opacity: 0.95; }
+  .spesies { font-size: 30px; font-style: italic; opacity: 0.7; margin-top: 30px; }
+  .emoji-besar { font-size: 120px; margin-bottom: 30px; }
+  .nomor-slide {
+    position: absolute; bottom: 40px; right: 50px;
+    font-size: 28px; opacity: 0.5;
+  }
+  .cta { font-size: 36px; margin-top: 20px; opacity: 0.9; }
+</style>
+</head>
+<body class="{{ tipe }}">
+  {% if tipe == "cover" %}
+    <div class="emoji-besar">🔍</div>
+    <div class="label">MITOS vs FAKTA</div>
+    <div class="judul">{{ nama_lokal }}</div>
+    <div class="isi">Benarkah kata orang? Geser untuk tahu kebenarannya 👉</div>
+    <div class="spesies">{{ spesies }}</div>
+  {% elif tipe == "mitos" %}
+    <div class="emoji-besar">🚫</div>
+    <div class="label">MITOS</div>
+    <div class="isi">"{{ mitos }}"</div>
+  {% elif tipe == "fakta" %}
+    <div class="emoji-besar">✅</div>
+    <div class="label">FAKTA</div>
+    <div class="isi">{{ fakta }}</div>
+    <div class="spesies">{{ spesies }}</div>
+  {% elif tipe == "penutup" %}
+    <div class="emoji-besar">🌿</div>
+    <div class="label">YUK LESTARIKAN</div>
+    <div class="isi">Jangan percaya mitos, percayalah pada ilmu pengetahuan!</div>
+    <div class="cta">Follow untuk fakta satwa lainnya 🐾<br>Save & share biar makin banyak yang tahu!</div>
+  {% endif %}
+  <div class="nomor-slide">{{ nomor }}/4</div>
+</body>
+</html>
