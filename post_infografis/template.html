@@ -22,10 +22,10 @@
     body.fauna { background: #151311; }
     body.flora { background: #0d1713; }
 
-    /* ===== FOTO ATAS: bersih, tanpa teks ===== */
+    /* ===== FOTO: 75% tinggi (810px), bersih tanpa teks ===== */
     .hero {
       position: relative;
-      height: 440px;
+      height: 810px;
       overflow: hidden;
       flex-shrink: 0;
     }
@@ -45,30 +45,29 @@
       z-index: 2;
     }
 
-    /* ===== KONTEN BAWAH: judul + fakta, semua di area gelap ===== */
+    /* ===== TEKS: 25% tinggi (270px), di bawah ===== */
     .content {
-      flex: 1;
+      height: 270px;
+      flex-shrink: 0;
       display: flex;
       flex-direction: column;
-      padding: 28px 48px 24px;
       justify-content: space-between;
+      padding: 18px 48px;
     }
 
-    /* Judul spesies — sekarang di area gelap, tidak menutupi foto */
     .badge-row {
       display: flex;
-      gap: 10px;
-      margin-bottom: 10px;
+      gap: 8px;
     }
     .badge {
       display: inline-block;
       background: #d97706;
       color: #1a0f05;
-      font-size: 15px;
+      font-size: 13px;
       font-weight: 800;
       text-transform: uppercase;
       letter-spacing: 1.5px;
-      padding: 5px 12px;
+      padding: 4px 10px;
       border-radius: 6px;
     }
     body.flora .badge { background: #38a169; color: #0b1d14; }
@@ -76,115 +75,86 @@
       display: inline-block;
       background: rgba(255,255,255,0.08);
       color: #fbbf24;
-      font-size: 14px;
+      font-size: 12px;
       font-weight: 700;
-      padding: 5px 12px;
+      padding: 4px 10px;
       border-radius: 6px;
       border: 1px solid rgba(251,191,36,0.5);
     }
     body.flora .badge-iucn { color: #86efac; border-color: rgba(134,239,172,0.5); }
+
     .title {
-      font-size: 58px;
+      font-size: 42px;
       font-weight: 900;
       color: #fff;
       text-transform: uppercase;
-      line-height: 1.05;
+      line-height: 1.1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .latin {
-      font-size: 22px;
+      font-size: 18px;
       font-style: italic;
       color: #d1d5db;
-      margin-top: 4px;
+      margin-top: 2px;
     }
 
-    /* Headline: 1 fakta paling menarik, BESAR */
+    /* Satu fakta unggulan, ringkas */
     .headline {
-      border-left: 8px solid #d97706;
-      padding-left: 20px;
-      margin: 14px 0 6px;
+      border-left: 6px solid #d97706;
+      padding-left: 14px;
     }
     body.flora .headline { border-left-color: #48bb78; }
-    .headline-title {
-      font-size: 34px;
-      font-weight: 800;
-      color: #f59e0b;
-      line-height: 1.15;
-    }
-    body.flora .headline-title { color: #68d391; }
-    .headline-desc {
-      font-size: 24px;
+    .headline-text {
+      font-size: 20px;
       color: #e2e8f0;
-      line-height: 1.35;
-      margin-top: 6px;
+      line-height: 1.3;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
-
-    /* Fakta kecil lainnya */
-    .facts-mini {
-      display: flex;
-      gap: 16px;
-      margin: 12px 0;
-    }
-    .fact-mini {
-      flex: 1;
-      background: rgba(255,255,255,0.05);
-      border-radius: 12px;
-      padding: 14px 16px;
-    }
-    .fact-mini-title {
-      font-size: 17px;
-      font-weight: 700;
+    .headline-text strong {
       color: #f59e0b;
-      margin-bottom: 4px;
     }
-    body.flora .fact-mini-title { color: #68d391; }
-    .fact-mini-desc {
-      font-size: 16px;
-      color: #cbd5e0;
-      line-height: 1.35;
-    }
+    body.flora .headline-text strong { color: #68d391; }
 
-    /* Footer: habitat + CTA */
+    /* Footer: habitat + CTA sebaris */
     .footer {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      border-top: 2px solid rgba(255,255,255,0.12);
-      padding-top: 14px;
+      border-top: 1px solid rgba(255,255,255,0.12);
+      padding-top: 10px;
     }
     .habitat-tag {
-      font-size: 17px;
+      font-size: 15px;
       color: #cbd5e0;
-      max-width: 60%;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 65%;
     }
     .cta {
-      font-size: 19px;
+      font-size: 16px;
       font-weight: 700;
       color: #f59e0b;
+      white-space: nowrap;
     }
     body.flora .cta { color: #68d391; }
-    .brand {
-      font-size: 18px;
-      font-weight: 800;
-      letter-spacing: 1px;
-      color: #d97706;
-      margin-top: 6px;
-      text-align: right;
-    }
-    body.flora .brand { color: #48bb78; }
   </style>
 </head>
 <body class="{{ category.lower() }}">
 
-  <!-- FOTO: bersih tanpa teks -->
+  <!-- FOTO: 75%, bersih -->
   <div class="hero">
     <img src="{{ image_url }}" alt="{{ name }}">
     <div class="photo-credit">Foto: {{ image_source }}</div>
   </div>
 
-  <!-- KONTEN: semua teks di area gelap -->
+  <!-- TEKS: 25%, di bawah -->
   <div class="content">
-    <!-- Judul spesies -->
-    <div class="title-block">
+    <div>
       <div class="badge-row">
         <div class="badge">{{ category }} &bull; Pulau Jawa</div>
         <div class="badge-iucn">🛡️ {{ iucn_status }}</div>
@@ -193,29 +163,13 @@
       <div class="latin">{{ latin_name }}</div>
     </div>
 
-    <!-- Headline: fakta pertama = paling menarik, tampil BESAR -->
     <div class="headline">
-      <div class="headline-title">{{ facts[0].title }}</div>
-      <div class="headline-desc">{{ facts[0].desc }}</div>
+      <div class="headline-text"><strong>{{ facts[0].title }}:</strong> {{ facts[0].desc }}</div>
     </div>
 
-    <!-- Fakta 2 & 3: kecil -->
-    <div class="facts-mini">
-      {% for fact in facts[1:] %}
-      <div class="fact-mini">
-        <div class="fact-mini-title">{{ fact.title }}</div>
-        <div class="fact-mini-desc">{{ fact.desc }}</div>
-      </div>
-      {% endfor %}
-    </div>
-
-    <!-- Footer -->
     <div class="footer">
       <div class="habitat-tag">📍 {{ habitat }}</div>
-      <div>
-        <div class="cta">Follow untuk satwa lainnya 🐾</div>
-        <div class="brand">Indo Bizarre</div>
-      </div>
+      <div class="cta">Follow untuk satwa lainnya 🐾</div>
     </div>
   </div>
 
