@@ -34,6 +34,18 @@
       height: 100%;
       object-fit: cover;
     }
+    /* Gradasi blur di bawah foto: transisi halus ke area teks */
+    .hero::after {
+      content: '';
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      height: 140px;
+      background: linear-gradient(to bottom, transparent, #151311);
+      pointer-events: none;
+    }
+    body.flora .hero::after {
+      background: linear-gradient(to bottom, transparent, #0d1713);
+    }
     .photo-credit {
       position: absolute;
       top: 14px; right: 14px;
