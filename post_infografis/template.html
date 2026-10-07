@@ -105,12 +105,25 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
+    .latin-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 4px;
+    }
     .latin {
       font-size: 21px;
       font-style: italic;
       color: #d1d5db;
-      margin-top: 2px;
     }
+    .brand {
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: 1px;
+      color: #d97706;
+      white-space: nowrap;
+    }
+    body.flora .brand { color: #48bb78; }
 
     /* Satu fakta unggulan, ringkas */
     .headline {
@@ -196,7 +209,10 @@
         <div class="badge-iucn">🛡️ {{ iucn_status }}</div>
       </div>
       <div class="title">{{ name }}</div>
-      <div class="latin">{{ latin_name }}</div>
+      <div class="latin-row">
+        <div class="latin">{{ latin_name }}</div>
+        <div class="brand">Indo Bizarre</div>
+      </div>
     </div>
 
     <div class="headline">
