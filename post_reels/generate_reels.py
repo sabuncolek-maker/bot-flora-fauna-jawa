@@ -341,13 +341,12 @@ def render_multi_photo_reels(photo_files):
     )
 
     # Musik latar: brown noise (suara dengung rendah seperti angin)
-    # difilter lowpass agar halus, volume sangat kecil (0.05).
-    # Kenapa brown noise: terdengar alami seperti angin/gemerisik,
-    # dibuat langsung oleh ffmpeg (tidak butuh file eksternal,
-    # bebas masalah hak cipta), dan selalu tersedia.
+    # difilter lowpass agar halus, volume 0.10 (terdengar lembut tapi
+    # tidak mengganggu narasi). Dibuat langsung oleh ffmpeg -
+    # tidak butuh file eksternal, bebas masalah hak cipta.
     ambient_filter = (
         "anoisesrc=color=brown:duration=40:sample_rate=44100[noise];"
-        "[noise]lowpass=f=400,volume=0.05[amb]"
+        "[noise]lowpass=f=400,volume=0.10[amb]"
     )
 
     full_filter = (
