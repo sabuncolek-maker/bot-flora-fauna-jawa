@@ -22,10 +22,10 @@
     body.fauna { background: #151311; }
     body.flora { background: #0d1713; }
 
-    /* ===== FOTO BESAR SETENGAH ATAS ===== */
+    /* ===== FOTO ATAS: bersih, tanpa teks ===== */
     .hero {
       position: relative;
-      height: 540px;
+      height: 440px;
       overflow: hidden;
       flex-shrink: 0;
     }
@@ -34,24 +34,31 @@
       height: 100%;
       object-fit: cover;
     }
-    /* Gradasi gelap di bawah foto agar teks judul terbaca */
-    .hero::after {
-      content: '';
+    .photo-credit {
       position: absolute;
-      bottom: 0; left: 0; right: 0;
-      height: 280px;
-      background: linear-gradient(to top, rgba(0,0,0,0.85), transparent);
-    }
-    .hero-text {
-      position: absolute;
-      bottom: 0; left: 0; right: 0;
-      padding: 16px 48px;
+      top: 14px; right: 14px;
+      background: rgba(0,0,0,0.6);
+      color: #cbd5e0;
+      font-size: 13px;
+      padding: 4px 10px;
+      border-radius: 4px;
       z-index: 2;
     }
+
+    /* ===== KONTEN BAWAH: judul + fakta, semua di area gelap ===== */
+    .content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      padding: 28px 48px 24px;
+      justify-content: space-between;
+    }
+
+    /* Judul spesies — sekarang di area gelap, tidak menutupi foto */
     .badge-row {
       display: flex;
       gap: 10px;
-      margin-bottom: 8px;
+      margin-bottom: 10px;
     }
     .badge {
       display: inline-block;
@@ -67,7 +74,7 @@
     body.flora .badge { background: #38a169; color: #0b1d14; }
     .badge-iucn {
       display: inline-block;
-      background: rgba(0,0,0,0.55);
+      background: rgba(255,255,255,0.08);
       color: #fbbf24;
       font-size: 14px;
       font-weight: 700;
@@ -77,45 +84,24 @@
     }
     body.flora .badge-iucn { color: #86efac; border-color: rgba(134,239,172,0.5); }
     .title {
-      font-size: 44px;
+      font-size: 58px;
       font-weight: 900;
       color: #fff;
       text-transform: uppercase;
       line-height: 1.05;
-      text-shadow: 2px 2px 8px rgba(0,0,0,0.6);
     }
     .latin {
-      font-size: 20px;
+      font-size: 22px;
       font-style: italic;
       color: #d1d5db;
-      margin-top: 2px;
-      text-shadow: 1px 1px 4px rgba(0,0,0,0.6);
-    }
-    .photo-credit {
-      position: absolute;
-      top: 14px; right: 14px;
-      background: rgba(0,0,0,0.6);
-      color: #cbd5e0;
-      font-size: 13px;
-      padding: 4px 10px;
-      border-radius: 4px;
-      z-index: 2;
-    }
-
-    /* ===== KONTEN BAWAH ===== */
-    .content {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      padding: 32px 48px 28px;
-      justify-content: space-between;
+      margin-top: 4px;
     }
 
     /* Headline: 1 fakta paling menarik, BESAR */
     .headline {
       border-left: 8px solid #d97706;
       padding-left: 20px;
-      margin-bottom: 8px;
+      margin: 14px 0 6px;
     }
     body.flora .headline { border-left-color: #48bb78; }
     .headline-title {
@@ -136,7 +122,7 @@
     .facts-mini {
       display: flex;
       gap: 16px;
-      margin: 16px 0;
+      margin: 12px 0;
     }
     .fact-mini {
       flex: 1;
@@ -163,11 +149,12 @@
       justify-content: space-between;
       align-items: center;
       border-top: 2px solid rgba(255,255,255,0.12);
-      padding-top: 16px;
+      padding-top: 14px;
     }
     .habitat-tag {
       font-size: 17px;
       color: #cbd5e0;
+      max-width: 60%;
     }
     .cta {
       font-size: 19px;
@@ -188,11 +175,16 @@
 </head>
 <body class="{{ category.lower() }}">
 
-  <!-- FOTO BESAR -->
+  <!-- FOTO: bersih tanpa teks -->
   <div class="hero">
     <img src="{{ image_url }}" alt="{{ name }}">
     <div class="photo-credit">Foto: {{ image_source }}</div>
-    <div class="hero-text">
+  </div>
+
+  <!-- KONTEN: semua teks di area gelap -->
+  <div class="content">
+    <!-- Judul spesies -->
+    <div class="title-block">
       <div class="badge-row">
         <div class="badge">{{ category }} &bull; Pulau Jawa</div>
         <div class="badge-iucn">🛡️ {{ iucn_status }}</div>
@@ -200,10 +192,7 @@
       <div class="title">{{ name }}</div>
       <div class="latin">{{ latin_name }}</div>
     </div>
-  </div>
 
-  <!-- KONTEN -->
-  <div class="content">
     <!-- Headline: fakta pertama = paling menarik, tampil BESAR -->
     <div class="headline">
       <div class="headline-title">{{ facts[0].title }}</div>
