@@ -1,10 +1,8 @@
 name: Mitos vs Fakta Carousel
 
 on:
-  # Jadwal otomatis DIMATIKAN dulu untuk tes manual.
-  # Aktifkan lagi setelah tes berhasil dengan menghapus tanda # di bawah:
-  # schedule:
-  #   - cron: '17 3 * * 3,6'  # Rabu & Sabtu jam 10:00 WIB
+  schedule:
+   - cron: '17 3 * * 3,6'  # Rabu & Sabtu jam 10:00 WIB
   workflow_dispatch:  # Tombol "Run workflow" untuk tes manual
 
 jobs:
