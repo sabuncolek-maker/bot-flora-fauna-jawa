@@ -72,20 +72,107 @@ def buat_slide(template, data_slide, output_path):
         browser.close()
     print(f"Slide tersimpan: {output_path}")
 
+def dapat_ig_user_id():
+    """Ambil ID akun Instagram Bisnis yang tertaut ke Halaman Facebook."""
+    url = f"https://graph.facebook.com/v21.0/{FB_PAGE_ID}?fields=instagram_business_account&access_token={FB_ACCESS_TOKEN}"
+    data = requests.get(url, timeout=10).json()
+    akun = data.get("instagram_business_account")
+    if not akun:
+        print("Peringatan: tidak ada akun Instagram Bisnis yang tertaut.")
+        return None
+    return akun["id"]
+
+def upload_ke_facebook(path_gambar, caption):
+    """Unggah satu gambar ke Halaman Facebook, kembalikan URL publiknya."""
+    url = f"https://graph.facebook.com/v21.0/{FB_PAGE_ID}/photos"
+    with open(path_gambar, "rb") as f:
+        res = requests.post(url, data={"caption": caption, "access_token": FB_ACCESS_TOKEN},
+                            files={"source": f}, timeout=30).json()
+    if "id" not in res:
+        print(f"Gagal upload ke Facebook: {res}")
+        return None
+    # Ambil URL publik dari foto yang baru diupload
+    url_foto = f"https://graph.facebook.com/v21.0/{res['id']}?fields=images&access_token={FB_ACCESS_TOKEN}"
+    images = requests.get(url_foto, timeout=10).json().get("images", [])
+    if not images:
+        return None
+    return images[0]["source"]
+
 def posting_carousel_ig(slide_paths, caption):
-    """Posting carousel ke Instagram via Graph API."""
-    # Step 1: Upload tiap gambar dapat container ID
-    containers = []
-    for path in slide_paths:
-        # Upload menggunakan resumable upload (sama seperti bot utama)
-        # ... implementasi mengikuti pola bot utama ...
-        pass
-    # Step 2: Buat carousel container
-    # Step 3: Publish
-    print("Carousel diposting!")
-    return True
+    """
+    Posting 4 slide sebagai satu carousel Instagram.
+    Alur: tiap slide jadi 'wadah' dulu -> gabung jadi carousel -> publish.
+    Ini aturan resmi Meta API, tidak bisa langsung kirim 4 gambar sekaligus.
+    """
+    ig_user_id = dapat_ig_user_id()
+    if not ig_user_id:
+        return None
+
+    # Langkah 1: tiap slide diupload ke Facebook dulu biar dapat URL publik,
+    # lalu dibuatkan wadah carousel-item di Instagram
+    wadah_ids = []
+    for i, path in enumerate(slide_paths, 1):
+        print(f"Upload slide {i}/{len(slide_paths)}...")
+        url_publik = upload_ke_facebook(path, f"Slide {i} - Mitos vs Fakta")
+        if not url_publik:
+            print(f"Slide {i} gagal diupload, batalkan carousel.")
+            return None
+        # Buat wadah item carousel (tanpa caption, caption hanya di induk)
+        res = requests.post(
+            f"https://graph.facebook.com/v21.0/{ig_user_id}/media",
+            data={"image_url": url_publik, "is_carousel_item": "true",
+                  "access_token": FB_ACCESS_TOKEN},
+            timeout=15).json()
+        if "id" not in res:
+            print(f"Gagal buat wadah slide {i}: {res}")
+            return None
+        wadah_ids.append(res["id"])
+
+    print("Menunggu Instagram memproses semua slide...")
+    time.sleep(10)
+
+    # Langkah 2: gabungkan wadah-wadah jadi satu carousel
+    res_carousel = requests.post(
+        f"https://graph.facebook.com/v21.0/{ig_user_id}/media",
+        data={"media_type": "CAROUSEL",
+              "children": ",".join(wadah_ids),
+              "caption": caption,
+              "access_token": FB_ACCESS_TOKEN},
+        timeout=15).json()
+    carousel_id = res_carousel.get("id")
+    if not carousel_id:
+        print(f"Gagal buat carousel: {res_carousel}")
+        return None
+
+    time.sleep(5)
+
+    # Langkah 3: publish carousel
+    res_publish = requests.post(
+        f"https://graph.facebook.com/v21.0/{ig_user_id}/media_publish",
+        data={"creation_id": carousel_id, "access_token": FB_ACCESS_TOKEN},
+        timeout=15).json()
+    post_id = res_publish.get("id")
+    if post_id:
+        print(f"CAROUSEL TAYANG! ID: {post_id}")
+    else:
+        print(f"Gagal publish carousel: {res_publish}")
+    return post_id
+
+def kirim_notif_telegram(pesan):
+    """Kirim notifikasi ke Telegram (pola sama seperti bot utama)."""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return
+    try:
+        url = "https://api.telegram.org/bot" + TELEGRAM_BOT_TOKEN + "/sendMessage"
+        requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": pesan,
+                                 "parse_mode": "Markdown"}, timeout=10)
+    except Exception as e:
+        print(f"Gagal kirim Telegram: {e}")
 
 def main():
+    # Fungsi utama bot. Urutan kerja: pilih mitos -> bikin 4 slide ->
+    # posting carousel -> catat history -> lapor ke Telegram.
+    mitos = pilih_mitos()
     mitos = pilih_mitos()
     if not mitos:
         return
@@ -121,10 +208,17 @@ def main():
         f"#MitosVsFakta #SatwaJawa #EdukasiSatwa #FloraFaunaIndonesia"
     )
 
-    # Posting (implementasi penuh mengikuti pola bot utama)
-    # posting_carousel_ig(slides, caption)
+    # Posting carousel ke Instagram
+    print("Posting carousel ke Instagram...")
+    post_id = posting_carousel_ig(slides, caption)
 
-    # Simpan ke history
+    if not post_id:
+        kirim_notif_telegram(f"❌ *Carousel Mitos vs Fakta gagal diposting!*\n\nTarget: {mitos['nama_lokal']}")
+        print("Posting gagal, history tidak dicatat.")
+        return
+
+    # Simpan ke history hanya jika posting berhasil
+    # (supaya mitos yang gagal tetap bisa dicoba lagi besok)
     history = []
     if os.path.exists(HISTORY_FILE):
         with open(HISTORY_FILE, encoding="utf-8") as f:
@@ -133,7 +227,12 @@ def main():
     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
 
-    print("Selesai! Mitos vs Fakta berhasil dibuat.")
+    kirim_notif_telegram(
+        f"✅ *Carousel Mitos vs Fakta tayang!*\n\n"
+        f"📌 Topik: {mitos['nama_lokal']}\n"
+        f"📸 Instagram: `{post_id}`"
+    )
+    print("Selesai! Mitos vs Fakta berhasil diposting.")
 
 if __name__ == "__main__":
     main()
