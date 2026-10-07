@@ -9,177 +9,192 @@
       padding: 0;
       font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     }
-    
-    /* Warna bawaan untuk Fauna (Nuansa Tanah & Cokelat Hangat) */
+
     body {
       width: 1080px;
       height: 1080px;
-      background: #151311;
-      color: #f5f2eb;
       display: flex;
       flex-direction: column;
-      padding: 50px 60px;
-      border: 12px solid #6e472b;
-      justify-content: space-between;
+      color: #f5f2eb;
+      overflow: hidden;
     }
-    
-    /* Pengalihan warna otomatis jika kategori adalah Flora (Nuansa Hijau Hutan) */
-    body.flora {
-      background: #0d1713;
-      color: #f0f4f1;
-      border-color: #2d5a46;
-    }
+    /* Fauna: cokelat hangat | Flora: hijau hutan */
+    body.fauna { background: #151311; }
+    body.flora { background: #0d1713; }
 
-    .header {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      border-bottom: 2px solid rgba(255, 255, 255, 0.15);
-      padding-bottom: 18px;
+    /* ===== FOTO BESAR SETENGAH ATAS ===== */
+    .hero {
+      position: relative;
+      height: 540px;
+      overflow: hidden;
+      flex-shrink: 0;
     }
-    .badge-container {
+    .hero img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    /* Gradasi gelap di bawah foto agar teks judul terbaca */
+    .hero::after {
+      content: '';
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      height: 280px;
+      background: linear-gradient(to top, rgba(0,0,0,0.85), transparent);
+    }
+    .hero-text {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      padding: 24px 48px;
+      z-index: 2;
+    }
+    .badge-row {
       display: flex;
       gap: 10px;
-      margin-bottom: 8px;
+      margin-bottom: 10px;
     }
     .badge {
       display: inline-block;
       background: #d97706;
       color: #1a0f05;
-      font-size: 16px;
+      font-size: 15px;
       font-weight: 800;
       text-transform: uppercase;
       letter-spacing: 1.5px;
       padding: 5px 12px;
       border-radius: 6px;
     }
-    body.flora .badge {
-      background: #38a169;
-      color: #0b1d14;
-    }
+    body.flora .badge { background: #38a169; color: #0b1d14; }
     .badge-iucn {
       display: inline-block;
-      background: rgba(255, 255, 255, 0.12);
+      background: rgba(0,0,0,0.55);
       color: #fbbf24;
-      font-size: 15px;
+      font-size: 14px;
       font-weight: 700;
-      letter-spacing: 1px;
       padding: 5px 12px;
       border-radius: 6px;
-      border: 1px solid rgba(251, 191, 36, 0.4);
+      border: 1px solid rgba(251,191,36,0.5);
     }
-    body.flora .badge-iucn {
-      color: #86efac;
-      border-color: rgba(134, 239, 172, 0.4);
-    }
+    body.flora .badge-iucn { color: #86efac; border-color: rgba(134,239,172,0.5); }
     .title {
-      font-size: 46px;
+      font-size: 58px;
       font-weight: 900;
-      color: #ffffff;
+      color: #fff;
       text-transform: uppercase;
-      line-height: 1.1;
+      line-height: 1.05;
+      text-shadow: 2px 2px 8px rgba(0,0,0,0.6);
     }
     .latin {
       font-size: 22px;
       font-style: italic;
-      color: #a0aec0;
+      color: #d1d5db;
       margin-top: 4px;
-    }
-    .main-content {
-      display: flex;
-      gap: 30px;
-      margin: 25px 0;
-      height: 660px;
-    }
-    .image-box {
-      flex: 1.1;
-      border-radius: 16px;
-      overflow: hidden;
-      border: 3px solid #6e472b;
-      background: #231c18;
-      position: relative;
-    }
-    body.flora .image-box {
-      border-color: #2d5a46;
-      background: #1a2e24;
-    }
-    .image-box img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
+      text-shadow: 1px 1px 4px rgba(0,0,0,0.6);
     }
     .photo-credit {
       position: absolute;
-      bottom: 10px;
-      left: 10px;
-      background: rgba(0, 0, 0, 0.65);
+      top: 14px; right: 14px;
+      background: rgba(0,0,0,0.6);
       color: #cbd5e0;
       font-size: 13px;
       padding: 4px 10px;
       border-radius: 4px;
-      letter-spacing: 0.5px;
-      backdrop-filter: blur(4px);
+      z-index: 2;
     }
-    .facts-box {
-      flex: 1.2;
+
+    /* ===== KONTEN BAWAH ===== */
+    .content {
+      flex: 1;
       display: flex;
       flex-direction: column;
+      padding: 32px 48px 28px;
       justify-content: space-between;
-      gap: 15px;
     }
-    .fact-card {
-      background: rgba(255, 255, 255, 0.05);
-      border-left: 6px solid #d97706;
-      padding: 16px 20px;
-      border-radius: 0 12px 12px 0;
+
+    /* Headline: 1 fakta paling menarik, BESAR */
+    .headline {
+      border-left: 8px solid #d97706;
+      padding-left: 20px;
+      margin-bottom: 8px;
     }
-    body.flora .fact-card {
-      border-left-color: #48bb78;
+    body.flora .headline { border-left-color: #48bb78; }
+    .headline-title {
+      font-size: 34px;
+      font-weight: 800;
+      color: #f59e0b;
+      line-height: 1.15;
     }
-    .fact-title {
-      font-size: 20px;
+    body.flora .headline-title { color: #68d391; }
+    .headline-desc {
+      font-size: 24px;
+      color: #e2e8f0;
+      line-height: 1.35;
+      margin-top: 6px;
+    }
+
+    /* Fakta kecil lainnya */
+    .facts-mini {
+      display: flex;
+      gap: 16px;
+      margin: 16px 0;
+    }
+    .fact-mini {
+      flex: 1;
+      background: rgba(255,255,255,0.05);
+      border-radius: 12px;
+      padding: 14px 16px;
+    }
+    .fact-mini-title {
+      font-size: 17px;
       font-weight: 700;
       color: #f59e0b;
       margin-bottom: 4px;
     }
-    body.flora .fact-title {
-      color: #68d391;
-    }
-    .fact-desc {
-      font-size: 18px;
+    body.flora .fact-mini-title { color: #68d391; }
+    .fact-mini-desc {
+      font-size: 16px;
+      color: #cbd5e0;
       line-height: 1.35;
-      color: #e2e8f0;
     }
+
+    /* Footer: habitat + CTA */
     .footer {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      border-top: 2px solid rgba(255, 255, 255, 0.15);
-      padding-top: 18px;
+      border-top: 2px solid rgba(255,255,255,0.12);
+      padding-top: 16px;
     }
     .habitat-tag {
-      font-size: 18px;
+      font-size: 17px;
       color: #cbd5e0;
-      background: rgba(255,255,255,0.07);
-      padding: 6px 16px;
-      border-radius: 6px;
     }
+    .cta {
+      font-size: 19px;
+      font-weight: 700;
+      color: #f59e0b;
+    }
+    body.flora .cta { color: #68d391; }
     .brand {
-      font-size: 22px;
+      font-size: 18px;
       font-weight: 800;
       letter-spacing: 1px;
       color: #d97706;
+      margin-top: 6px;
+      text-align: right;
     }
-    body.flora .brand {
-      color: #48bb78;
-    }
+    body.flora .brand { color: #48bb78; }
   </style>
 </head>
 <body class="{{ category.lower() }}">
-  <div class="header">
-    <div>
-      <div class="badge-container">
-        <div class="badge">{{ category }} &bull; PULAU JAWA</div>
+
+  <!-- FOTO BESAR -->
+  <div class="hero">
+    <img src="{{ image_url }}" alt="{{ name }}">
+    <div class="photo-credit">Foto: {{ image_source }}</div>
+    <div class="hero-text">
+      <div class="badge-row">
+        <div class="badge">{{ category }} &bull; Pulau Jawa</div>
         <div class="badge-iucn">🛡️ {{ iucn_status }}</div>
       </div>
       <div class="title">{{ name }}</div>
@@ -187,24 +202,33 @@
     </div>
   </div>
 
-  <div class="main-content">
-    <div class="image-box">
-      <img src="{{ image_url }}" alt="{{ name }}">
-      <div class="photo-credit">Foto: {{ image_source }}</div>
+  <!-- KONTEN -->
+  <div class="content">
+    <!-- Headline: fakta pertama = paling menarik, tampil BESAR -->
+    <div class="headline">
+      <div class="headline-title">{{ facts[0].title }}</div>
+      <div class="headline-desc">{{ facts[0].desc }}</div>
     </div>
-    <div class="facts-box">
-      {% for fact in facts %}
-      <div class="fact-card">
-        <div class="fact-title">{{ fact.title }}</div>
-        <div class="fact-desc">{{ facts_desc or fact.desc }}</div>
+
+    <!-- Fakta 2 & 3: kecil -->
+    <div class="facts-mini">
+      {% for fact in facts[1:] %}
+      <div class="fact-mini">
+        <div class="fact-mini-title">{{ fact.title }}</div>
+        <div class="fact-mini-desc">{{ fact.desc }}</div>
       </div>
       {% endfor %}
     </div>
+
+    <!-- Footer -->
+    <div class="footer">
+      <div class="habitat-tag">📍 {{ habitat }}</div>
+      <div>
+        <div class="cta">Follow untuk satwa lainnya 🐾</div>
+        <div class="brand">Indo Bizarre</div>
+      </div>
+    </div>
   </div>
 
-  <div class="footer">
-    <div class="habitat-tag">📍 Habitat: {{ habitat }}</div>
-    <div class="brand">Indo Bizarre</div>
-  </div>
 </body>
 </html>
