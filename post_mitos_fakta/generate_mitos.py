@@ -82,21 +82,47 @@ def dapat_ig_user_id():
         return None
     return akun["id"]
 
-def upload_ke_facebook(path_gambar, caption):
-    """Unggah satu gambar ke Halaman Facebook, kembalikan URL publiknya."""
+def upload_ke_facebook(path_gambar):
+    """
+    Unggah satu gambar ke Halaman Facebook sebagai UNPUBLISHED (tidak tayang di feed),
+    kembalikan (photo_id, URL publiknya).
+
+    Kenapa unpublished: upload biasa otomatis jadi 1 postingan sendiri per gambar.
+    Dengan unpublished, kita dapat URL-nya tanpa spam feed, lalu keempat foto
+    digabung jadi SATU postingan multi-foto lewat attached_media.
+    """
     url = f"https://graph.facebook.com/v21.0/{FB_PAGE_ID}/photos"
     with open(path_gambar, "rb") as f:
-        res = requests.post(url, data={"caption": caption, "access_token": FB_ACCESS_TOKEN},
+        res = requests.post(url, data={"published": "false", "access_token": FB_ACCESS_TOKEN},
                             files={"source": f}, timeout=30).json()
     if "id" not in res:
         print(f"Gagal upload ke Facebook: {res}")
-        return None
+        return None, None
+    photo_id = res["id"]
     # Ambil URL publik dari foto yang baru diupload
-    url_foto = f"https://graph.facebook.com/v21.0/{res['id']}?fields=images&access_token={FB_ACCESS_TOKEN}"
+    url_foto = f"https://graph.facebook.com/v21.0/{photo_id}?fields=images&access_token={FB_ACCESS_TOKEN}"
     images = requests.get(url_foto, timeout=10).json().get("images", [])
     if not images:
+        return None, None
+    return photo_id, images[0]["source"]
+
+def posting_multi_foto_fb(photo_ids, caption):
+    """
+    Buat SATU postingan Facebook berisi semua foto (album/multi-foto),
+    bukan 4 postingan terpisah.
+    """
+    url = f"https://graph.facebook.com/v21.0/{FB_PAGE_ID}/feed"
+    attached = [{"media_fbid": pid} for pid in photo_ids]
+    res = requests.post(url, data={
+        "message": caption,
+        "attached_media": json.dumps(attached),
+        "access_token": FB_ACCESS_TOKEN,
+    }, timeout=30).json()
+    if "id" not in res:
+        print(f"Gagal posting multi-foto FB: {res}")
         return None
-    return images[0]["source"]
+    print(f"Postingan FB multi-foto tayang! ID: {res['id']}")
+    return res["id"]
 
 def posting_carousel_ig(slide_paths, caption):
     """
@@ -108,15 +134,18 @@ def posting_carousel_ig(slide_paths, caption):
     if not ig_user_id:
         return None
 
-    # Langkah 1: tiap slide diupload ke Facebook dulu biar dapat URL publik,
-    # lalu dibuatkan wadah carousel-item di Instagram
+    # Langkah 1: tiap slide diupload ke Facebook sebagai UNPUBLISHED
+    # (tidak tayang di feed) biar dapat URL publik, lalu dibuatkan
+    # wadah carousel-item di Instagram
     wadah_ids = []
+    fb_photo_ids = []
     for i, path in enumerate(slide_paths, 1):
         print(f"Upload slide {i}/{len(slide_paths)}...")
-        url_publik = upload_ke_facebook(path, f"Slide {i} - Mitos vs Fakta")
+        photo_id, url_publik = upload_ke_facebook(path)
         if not url_publik:
             print(f"Slide {i} gagal diupload, batalkan carousel.")
             return None
+        fb_photo_ids.append(photo_id)
         # Buat wadah item carousel (tanpa caption, caption hanya di induk)
         res = requests.post(
             f"https://graph.facebook.com/v21.0/{ig_user_id}/media",
@@ -127,6 +156,11 @@ def posting_carousel_ig(slide_paths, caption):
             print(f"Gagal buat wadah slide {i}: {res}")
             return None
         wadah_ids.append(res["id"])
+
+    # Langkah 1b: posting SATU postingan multi-foto ke Facebook
+    # (bukan 4 postingan terpisah seperti sebelumnya)
+    print("Posting multi-foto ke Facebook...")
+    posting_multi_foto_fb(fb_photo_ids, caption)
 
     print("Menunggu Instagram memproses semua slide...")
     time.sleep(10)
