@@ -207,7 +207,6 @@ def main():
     # Fungsi utama bot. Urutan kerja: pilih mitos -> bikin 4 slide ->
     # posting carousel -> catat history -> lapor ke Telegram.
     mitos = pilih_mitos()
-    mitos = pilih_mitos()
     if not mitos:
         return
 
