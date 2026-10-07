@@ -1,59 +1,65 @@
 # Bot Flora Fauna Jawa 🌿🐾
 
-Sistem otomasi publikasi konten edukasi keanekaragaman hayati (flora dan fauna endemik/terancam punah) di Pulau Jawa. Bot ini beroperasi penuh di latar belakang menggunakan server **GitHub Actions**, meriset data satwa secara mandiri, lalu menyebarkannya ke Instagram, Facebook Page, dan Telegram tanpa intervensi manusia.
+Bot otomatis yang membuat dan memposting konten edukasi tentang flora & fauna Pulau Jawa ke **Instagram**, **Facebook**, dan **Telegram**. Berjalan sendiri 100% lewat GitHub Actions — tanpa perlu disentuh.
 
-## ⚙️ Fitur Utama
+## 📦 Jenis Konten
 
-* **Otomasi Jadwal & Jitter Anti-Spam**  
-  Menggunakan pengatur waktu *cron* di menit ganjil, dikombinasikan dengan **Jitter Delay** (jeda eksekusi acak 1–8 menit). Trik ini membuat pola unggahan terlihat organik seperti perilaku manusia asli untuk menghindari *shadowban* dari algoritma keamanan Meta.
-* **Penyaring Lisensi Hak Cipta**  
-  Bot hanya menarik foto berlisensi terbuka (CC0 dan CC-BY) dari **iNaturalist** dan **Wikimedia Commons**, memastikan seluruh aset visual aman dari cap air (*watermark*) dan klaim hak cipta komersial.
-* **Generator Infografis (Playwright & Jinja2)**  
-  Menyuntikkan hasil riset ke dalam *template* HTML khusus, lalu dipotret menjadi gambar PNG siap tayang menggunakan peramban web tanpa antarmuka grafis (*headless browser*).
-* **Produksi Reels Dinamis (FFmpeg)**  
-  Memproses 6 gambar statis menjadi video vertikal 30 detik dengan ritme perpindahan cepat (5 detik per frame) untuk menjaga retensi penonton. FFmpeg merakit lapisan kanvas buram (*boxblur*), efek pergerakan perlahan (*zoompan*), dan menempelkan teks tertutup secara permanen (*hardsub*).
-* **Narasi AI & Suara Natural (Groq & Edge-TTS)**  
-  Memanfaatkan LLM Groq untuk meracik naskah pendek berbahasa Indonesia dan Inggris. Teks kemudian disuarakan oleh Edge-TTS dengan intonasi natural berstandar dokumenter alam.
-* **Memori Anti-Duplikasi**  
-  Memiliki sistem rekam jejak internal (`posted.txt` & `history_reels.json`) untuk mencegah bot mempublikasikan spesies yang sama berulang kali.
+| Konten | Format | Jadwal |
+|--------|--------|--------|
+| 🖼️ Infografis | Gambar 1080×1080 (foto besar + fakta) | 3x sehari |
+| 🎬 Reels | Video vertikal ±30 detik (narasi Inggris + subtitle) | 3x sehari (23:37, 02:43, 05:21 WIB) |
+| 🔄 Mitos vs Fakta | Carousel 4 slide (cover → mitos → fakta → penutup) | Rabu & Sabtu, 10:17 WIB |
 
-## 📂 Struktur Repositori
+## ⚙️ Cara Kerja
 
-```text
+1. **Cari spesies** — Bot mengambil data satwa/tumbuhan Jawa dari GBIF (basis data hayati global), fokus ke yang statusnya terancam punah.
+2. **Ambil foto** — Foto berlisensi terbuka (CC0/CC-BY) dari iNaturalist & Wikimedia Commons. Aman dari masalah hak cipta.
+3. **Buat konten** —
+   - Infografis: template HTML di-render jadi gambar via Playwright
+   - Reels: 6 foto digabung jadi video via FFmpeg (background blur, zoom halus, transisi fade, musik latar, subtitle)
+   - Carousel: 4 slide HTML di-render jadi gambar
+4. **Posting otomatis** — Ke Instagram, Facebook Page, dan notifikasi Telegram via Meta Graph API.
+5. **Catat riwayat** — Spesies yang sudah diposting dicatat agar tidak duplikat. History hanya dicatat kalau posting **berhasil**.
+
+## 📂 Struktur Folder
+
+```
 ├── .github/workflows/
-│   ├── daily_post.yml       # Pemicu bot infografis lokal (3x sehari)
-│   └── daily_reels.yml      # Pemicu bot video Reels internasional (3x sehari)
+│   ├── daily_post.yml    # Infografis (3x sehari)
+│   ├── daily_reels.yml   # Reels (3x sehari)
+│   └── mitos_fakta.yml   # Carousel Mitos vs Fakta (2x seminggu)
 ├── post_infografis/
-│   ├── generate_and_post.py # Mesin utama perakit gambar HTML
-│   ├── template.html        # Desain dasar tata letak infografis
-│   └── posted.txt           # Catatan memori satwa untuk infografis
+│   ├── generate_and_post.py  # Script infografis
+│   ├── template.html         # Desain infografis
+│   └── posted.txt            # Riwayat spesies infografis
 ├── post_reels/
-│   ├── generate_reels.py    # Mesin utama perakit video & audio
-│   └── history_reels.json   # Catatan memori satwa untuk Reels
-└── requirements.txt         # Daftar pustaka Python yang dibutuhkan
+│   ├── generate_reels.py     # Script reels
+│   └── history_reels.json    # Riwayat spesies reels
+├── post_mitos_fakta/
+│   ├── generate_mitos.py     # Script carousel
+│   ├── template_mitos.html   # Desain slide carousel
+│   ├── mitos_list.json       # Daftar mitos
+│   └── history_mitos.json    # Riwayat mitos
+└── requirements.txt
+```
 
-🚀 Alur Kerja Sistem (Workflow)
-Pencarian Target: Bot memanggil GBIF API (basis data hayati global) untuk melacak spesies dengan status CR (Kritis), EN (Genting), atau VU (Rentan) di koordinat poligon Pulau Jawa.
+## 🛠️ Setup (untuk fork)
 
-Kurasi Gambar: Foto observasi asli ditarik otomatis, melewati filter lisensi ketat untuk menghindari jepretan fotografer komersial.
+Repo ini public agar dapat menit GitHub Actions gratis. Kalau mau fork, isi **GitHub Secrets** berikut:
 
-Perakitan Media:
+| Secret | Isi |
+|--------|-----|
+| `GROQ_API_KEY` | API key Groq (untuk AI narasi & fakta) |
+| `FB_PAGE_ID` | ID numerik Halaman Facebook |
+| `FB_PAGE_ACCESS_TOKEN` | Token akses Halaman Facebook |
+| `TELEGRAM_BOT_TOKEN` | Token bot Telegram |
+| `TELEGRAM_CHAT_ID` | ID chat Telegram untuk notifikasi |
 
-Jalur Feed: Playwright mencetak tata letak HTML ke gambar resolusi tinggi.
+## 🧪 Tes Manual
 
-Jalur Video: FFmpeg merender gabungan 6 foto, audio, dan subtitle waktu nyata.
+Buka tab **Actions** di GitHub → pilih workflow → **Run workflow** → **Run workflow**.
 
-Distribusi Publik: Menggunakan jalur Meta Graph API (metode Resumable Upload untuk file besar) guna menerbitkan konten serentak ke Instagram dan Facebook, diakhiri dengan pengiriman bukti tayang ke Telegram.
+## 📝 Catatan
 
-🛠️ Persyaratan Pemasangan (Setup)
-Repositori ini disetel sebagai Public agar mendapat kuota menit GitHub Actions gratis tanpa batas (unlimited). Jika kamu melakukan forking (menyalin repositori), wajib menanamkan variabel berikut ke dalam brankas GitHub Secrets:
-
-GROQ_API_KEY: Kunci akses API Groq.
-
-FB_PAGE_ID: ID numerik Halaman Facebook.
-
-FB_PAGE_ACCESS_TOKEN: Token statis dari Meta Developer (dengan izin publikasi konten media).
-
-TELEGRAM_BOT_TOKEN: Kunci bot dari BotFather Telegram.
-
-TELEGRAM_CHAT_ID: ID grup/akun personal Telegram untuk menerima notifikasi otomatis.
+- Jadwal pakai zona waktu UTC di file workflow (WIB = UTC+7).
+- Jangan push ke `main` saat workflow sedang berjalan — bisa bikin push riwayat ditolak. Workflow sudah dilengkapi `git pull --rebase` sebagai pengaman.
