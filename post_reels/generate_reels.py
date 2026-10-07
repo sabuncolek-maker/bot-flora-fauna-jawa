@@ -268,16 +268,17 @@ def render_multi_photo_reels(photo_files, hook_text="Did you know?"):
        narasi agar video terasa hidup, bukan hening
     """
     # --- Pilihan gerakan kamera (efek Ken Burns) ---
-    # 'on' = nomor frame yang sedang diproses (untuk animasi per frame)
+    # 'on' = nomor frame output yang sedang diproses (0 sampai d-1)
+    # Kecepatan dibuat halus (0.0008) agar tidak geter
     GERAKAN_KAMERA = [
         # 1. Zoom masuk perlahan ke tengah
-        "z='min(1+0.0012*on\\,1.25)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'",
+        "z='min(1+0.0008*on\\,1.2)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'",
         # 2. Zoom keluar perlahan dari tengah
-        "z='max(1.25-0.0012*on\\,1.0)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'",
+        "z='max(1.2-0.0008*on\\,1.0)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'",
         # 3. Geser ke kanan perlahan
-        "z='1.25':x='(iw-iw/zoom)*on/150':y='ih/2-(ih/zoom/2)'",
+        "z='1.2':x='(iw-iw/zoom)*on/150':y='ih/2-(ih/zoom/2)'",
         # 4. Geser ke kiri perlahan
-        "z='1.25':x='(iw-iw/zoom)*(1-on/150)':y='ih/2-(ih/zoom/2)'",
+        "z='1.2':x='(iw-iw/zoom)*(1-on/150)':y='ih/2-(ih/zoom/2)'",
     ]
 
     DURASI_FADE = 0.5  # durasi transisi antar foto (detik)
@@ -288,13 +289,17 @@ def render_multi_photo_reels(photo_files, hook_text="Did you know?"):
     durasi_list = []
 
     # --- Langkah 1: tiap foto jadi klip dengan gerakan acak ---
+    # PENTING: input adalah 1 gambar statis (tanpa -loop, tanpa -t).
+    # zoompan d=N membuat tepat N frame dari 1 gambar tersebut.
+    # (Bug sebelumnya: pakai -loop 1 sehingga tiap frame input
+    #  di-zoom N kali -> video jadi 10 menit!)
     for idx, photo in enumerate(photo_files):
         dur = random.choice([3, 4, 5, 6])  # durasi acak 3-6 detik
         durasi_list.append(dur)
         gerakan = random.choice(GERAKAN_KAMERA)
         frames = dur * FPS
 
-        cmd += ["-loop", "1", "-t", str(dur), "-i", photo]
+        cmd += ["-i", photo]
 
         filter_parts.append(
             f"[{idx}:v]scale=1080:1920:force_original_aspect_ratio=increase,"
