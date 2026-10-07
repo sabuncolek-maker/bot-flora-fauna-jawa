@@ -224,34 +224,68 @@ async def create_audio_and_clean_subtitles(text):
 # 6. Render Video 6 Foto & Hardsub (FFmpeg)
 # ==========================================
 def render_multi_photo_reels(photo_files):
-    clip_files = []
+    """
+    Render reels dengan 3 perbaikan agar tidak kaku:
+    1. GERAKAN BERVARIASI - tiap foto dapat gerakan kamera acak
+       (zoom masuk / zoom keluar / geser kanan / geser kiri)
+    2. TRANSISI HALUS - antar foto ada efek fade 0.5 detik (xfade),
+       tidak lagi patah seperti guntingan
+    3. DURASI BERVARIASI - tiap foto tampil 3-6 detik secara acak,
+       tidak monoton 5 detik semua
+    """
+    # --- Pilihan gerakan kamera (efek Ken Burns) ---
+    # 'on' = nomor frame yang sedang diproses (untuk animasi per frame)
+    GERAKAN_KAMERA = [
+        # 1. Zoom masuk perlahan ke tengah
+        "z='min(1+0.0012*on\\,1.25)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'",
+        # 2. Zoom keluar perlahan dari tengah
+        "z='max(1.25-0.0012*on\\,1.0)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'",
+        # 3. Geser ke kanan perlahan
+        "z='1.25':x='(iw-iw/zoom)*on/150':y='ih/2-(ih/zoom/2)'",
+        # 4. Geser ke kiri perlahan
+        "z='1.25':x='(iw-iw/zoom)*(1-on/150)':y='ih/2-(ih/zoom/2)'",
+    ]
 
-    for idx, photo in enumerate(photo_files, start=1):
-        clip_output = os.path.join(BASE_DIR, f"clip_{idx}.mp4")
-        filter_str = (
-            "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=25:5[bg];"
-            "[0:v]scale=1080:1920:force_original_aspect_ratio=decrease[fg];"
-            "[bg][fg]overlay=(W-w)/2:(H-h)/2,"
-            "zoompan=z='min(zoom+0.0006,1.08)':d=125:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps=25" # Berubah jadi d=125
+    DURASI_FADE = 0.5  # durasi transisi antar foto (detik)
+    FPS = 25
+
+    cmd = ["ffmpeg", "-y"]
+    filter_parts = []
+    durasi_list = []
+
+    # --- Langkah 1: tiap foto jadi klip dengan gerakan acak ---
+    for idx, photo in enumerate(photo_files):
+        dur = random.choice([3, 4, 5, 6])  # durasi acak 3-6 detik
+        durasi_list.append(dur)
+        gerakan = random.choice(GERAKAN_KAMERA)
+        frames = dur * FPS
+
+        cmd += ["-loop", "1", "-t", str(dur), "-i", photo]
+
+        filter_parts.append(
+            f"[{idx}:v]scale=1080:1920:force_original_aspect_ratio=increase,"
+            f"crop=1080:1920,boxblur=20:5[bg{idx}];"
+            f"[{idx}:v]scale=1080:1920:force_original_aspect_ratio=increase,"
+            f"crop=1080:1920[fg{idx}];"
+            f"[bg{idx}][fg{idx}]overlay=(W-w)/2:(H-h)/2,"
+            f"zoompan={gerakan}:d={frames}:s=1080x1920:fps={FPS},"
+            f"settb=AVTB[v{idx}]"
         )
-        cmd_clip = [
-            "ffmpeg", "-y",
-            "-loop", "1",
-            "-i", photo,
-            "-t", "5", # Berubah jadi 5 detik
-            "-filter_complex", filter_str,
-            "-c:v", "libx264",
-            "-pix_fmt", "yuv420p",
-            clip_output
-        ]
-        subprocess.run(cmd_clip, check=True, cwd=BASE_DIR)
-        clip_files.append(clip_output)
+        print(f"  Foto {idx+1}: durasi {dur} detik, gerakan acak")
 
-    concat_txt = os.path.join(BASE_DIR, "concat_list.txt")
-    with open(concat_txt, "w", encoding="utf-8") as f:
-        for c in clip_files:
-            f.write(f"file '{c}'\n")
+    # --- Langkah 2: gabung semua klip dengan transisi fade halus ---
+    # Rumus offset xfade: (total durasi sejauh ini) - (durasi fade)
+    offset = durasi_list[0] - DURASI_FADE
+    xfade = (f"[v0][v1]xfade=transition=fade:duration={DURASI_FADE}:"
+             f"offset={offset:.2f}[x1]")
+    for i in range(2, len(photo_files)):
+        offset += durasi_list[i - 1] - DURASI_FADE
+        xfade += (f";[x{i-1}][v{i}]xfade=transition=fade:duration={DURASI_FADE}:"
+                  f"offset={offset:.2f}[x{i}]")
+    filter_parts.append(xfade)
+    label_akhir = f"[x{len(photo_files)-1}]"
 
+    # --- Langkah 3: tambah subtitle, audio, render final ---
     sub_filter = (
         "subtitles=narasi.srt:force_style='Alignment=2\\,"
         "FontSize=8\\,"
@@ -263,13 +297,14 @@ def render_multi_photo_reels(photo_files):
         "MarginV=25'"
     )
 
-    cmd_merge = [
-        "ffmpeg", "-y",
-        "-f", "concat",
-        "-safe", "0",
-        "-i", concat_txt,
-        "-i", FILE_AUDIO,
-        "-vf", sub_filter,
+    full_filter = ";".join(filter_parts) + f";{label_akhir}{sub_filter}[vout]"
+
+    idx_audio = len(photo_files)
+    cmd += ["-i", FILE_AUDIO]
+    cmd += [
+        "-filter_complex", full_filter,
+        "-map", "[vout]",
+        "-map", f"{idx_audio}:a",
         "-c:v", "libx264",
         "-pix_fmt", "yuv420p",
         "-c:a", "aac",
@@ -277,7 +312,9 @@ def render_multi_photo_reels(photo_files):
         "-shortest",
         FILE_FINAL
     ]
-    subprocess.run(cmd_merge, check=True, cwd=BASE_DIR)
+
+    print("Merender video final dengan transisi halus...")
+    subprocess.run(cmd, check=True, cwd=BASE_DIR)
     print("Render final Reels sukses:", FILE_FINAL)
 
 # ==========================================
