@@ -6,6 +6,9 @@ import requests
 from jinja2 import Template
 from playwright.sync_api import sync_playwright
 from groq import Groq
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from post_shared.quality import request_json, request_bytes, is_image_bytes, parse_json_object, validate_infographic_payload
 
 # ==========================================
 # 1. Cek Kunci Rahasia (Environment Variables)
@@ -47,8 +50,7 @@ def get_species_from_gbif(posted_list):
             "offset": offset_acak
         }
         
-        res = requests.get(url_gbif, params=params, timeout=15)
-        data = res.json()
+        data = request_json("GET", url_gbif, params=params, timeout=20)
         results = data.get("results", [])
         
         kandidat = []
@@ -107,9 +109,7 @@ def fetch_inaturalist_image(latin_name):
     """Mencari foto observasi satwa liar asli dari API iNaturalist"""
     try:
         url = f"https://api.inaturalist.org/v1/taxa?q={requests.utils.quote(latin_name)}&locale=id&license=cc0,cc-by"
-        r = requests.get(url, timeout=10)
-        if r.status_code == 200:
-            res_data = r.json()
+        res_data = request_json("GET", url, timeout=15)
             results = res_data.get("results", [])
             if results:
                 default_photo = results[0].get("default_photo")
@@ -128,9 +128,7 @@ def fetch_species_image(latin_name):
     # 1. Coba Wikipedia
     try:
         url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{requests.utils.quote(latin_name)}"
-        r = requests.get(url, headers=headers, timeout=10)
-        if r.status_code == 200:
-            res_data = r.json()
+        res_data = request_json("GET", url, headers=headers, timeout=15)
             img_url = ""
             if "originalimage" in res_data:
                 img_url = res_data["originalimage"]["source"]
@@ -330,7 +328,7 @@ with open(image_path, "rb") as img_file:
         "caption": data["fb_caption"], 
         "access_token": FB_ACCESS_TOKEN
     }
-    res = requests.post(fb_url, data=payload, files={"source": img_file})
+    res = requests.post(fb_url, data=payload, files={"source": img_file}, timeout=30)\nif not res.ok:\n    raise RuntimeError(f"Facebook upload gagal HTTP {res.status_code}: {res.text[:500]}")
 
 res_json = res.json()
 
