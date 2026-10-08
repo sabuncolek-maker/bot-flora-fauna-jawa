@@ -95,51 +95,41 @@ print(f"Target spesies hari ini: {selected_latin}")
 # 4. Fungsi Pembantu (Foto, Notifikasi, Instagram)
 # ==========================================
 def fetch_inaturalist_image(latin_name):
-    """Mencari foto observasi satwa liar asli dari API iNaturalist"""
+    """Mencari foto observasi spesies dari iNaturalist."""
     try:
         url = f"https://api.inaturalist.org/v1/taxa?q={requests.utils.quote(latin_name)}&locale=id&license=cc0,cc-by"
         res_data = request_json("GET", url, timeout=15)
-        results = res_data.get("results", [])
-        if results:
-            default_photo = results[0].get("default_photo")
-                if default_photo and "medium_url" in default_photo:
-                    img_url = default_photo["medium_url"].replace("medium", "large")
-                    print("-> Foto berhasil diambil dari iNaturalist!")
-                    return img_url
+        for result in res_data.get("results", []):
+            photo = result.get("default_photo") or {}
+            img_url = photo.get("large_url") or photo.get("medium_url")
+            if img_url:
+                print("-> Foto berhasil diambil dari iNaturalist!")
+                return img_url
     except Exception as e:
         print(f"Gagal mengambil dari iNaturalist: {e}")
     return None
 
+
 def fetch_species_image(latin_name):
-    headers = {"User-Agent": "FaunaBot/1.0 (contact@indobizarre.local)"}
-    # 1. Coba Wikipedia
+    headers = {"User-Agent": "FaunaBot/1.0"}
     try:
         url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{requests.utils.quote(latin_name)}"
         res_data = request_json("GET", url, headers=headers, timeout=15)
-            img_url = ""
-            if "originalimage" in res_data:
-                img_url = res_data["originalimage"]["source"]
-            elif "thumbnail" in res_data:
-                img_url = res_data["thumbnail"]["source"]
-
-            if img_url:
-                url_kecil = img_url.lower()
-                kata_terlarang = ["map", "range", "distribution", "sebaran", ".svg"]
-                if not any(kata in url_kecil for kata in kata_terlarang):
-                    print("-> Foto berhasil diambil dari Wikipedia!")
-                    return img_url, "Wikimedia Commons"
+        img_url = (res_data.get("originalimage") or res_data.get("thumbnail") or {}).get("source", "")
+        if img_url:
+            lower = img_url.lower()
+            if not any(word in lower for word in ["map", "range", "distribution", "sebaran", ".svg"]):
+                print("-> Foto berhasil diambil dari Wikipedia!")
+                return img_url, "Wikimedia Commons"
     except Exception as e:
         print(f"Gagal memproses Wikipedia: {e}")
 
-    # 2. Coba iNaturalist
     inat_img = fetch_inaturalist_image(latin_name)
     if inat_img:
         return inat_img, "iNaturalist"
 
-    # 3. Cadangan Unsplash
-    print("Foto spesifik tidak ditemukan, memakai foto cadangan alam.")
-    return cadangan, "Unsplash"
-
+    raise RuntimeError(f"Tidak ditemukan foto spesifik yang layak untuk {latin_name}; job dihentikan.")
+    
 def send_telegram_alert(pesan):
     """Mengirim notifikasi status ke Telegram"""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
