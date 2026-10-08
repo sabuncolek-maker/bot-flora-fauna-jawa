@@ -194,6 +194,27 @@ def _reusable_license(extmetadata):
     return bool(re.search(r"\bcc[- ]?by(?:[- ]?sa)?(?:\s|[- ]|$)", raw))
 
 
+def normalize_votes(value):
+    """Normalize iNaturalist vote payloads into a sortable numeric score."""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, list):
+        return len(value)
+    if isinstance(value, dict):
+        for key in ("count", "votes", "total"):
+            nested = value.get(key)
+            if isinstance(nested, (int, float)):
+                return nested
+            if isinstance(nested, list):
+                return len(nested)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0
+
+
 def get_media_candidates(latin, common_name):
     candidates = []
     seen_urls = set()
@@ -280,7 +301,7 @@ def get_media_candidates(latin, common_name):
                         "description": obs.get("description") or "",
                         "species_guess": obs.get("species_guess") or "",
                         "taxon_name": ((obs.get("taxon") or {}).get("name") or ""),
-                        "votes": obs.get("votes") or 0,
+                        "votes": normalize_votes(obs.get("votes")),
                     })
             if not results:
                 break
@@ -369,7 +390,7 @@ def download_species_media(latin, common_name):
     candidates.sort(
         key=lambda x: (
             x.get("relevance", 0),
-            x.get("votes", 0),
+            normalize_votes(x.get("votes", 0)),
             1 if x["source"] == "iNaturalist" else 0,
         ),
         reverse=True,
