@@ -38,7 +38,7 @@ FB_PAGE_ID = os.environ.get("FB_PAGE_ID", "").strip()
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 
-if not GROQ_KEY:
+if POST_MODE != "disabled" and not GROQ_KEY:
     raise RuntimeError("GROQ_API_KEY belum terpasang.")
 
 def http_json(method, url, retries=3, timeout=30, **kwargs):
@@ -597,14 +597,14 @@ def render_reel(media, hook, duration):
         cmd += ["-stream_loop", "-1"] if kind == "video" else ["-loop", "1"]
         cmd += ["-t", f"{per_media:.3f}", "-i", path]
         frames = max(1, round(per_media * fps))
-        motion = "1+0.00045*on" if i % 2 == 0 else "max(1.08-0.00045*on\\\\,1.0)"
+        motion = "1+0.00045*on" if i % 2 == 0 else "max(1.08-0.00045*on\\,1.0)"
 
         if kind == "video":
             filters.append(
-                f"[{i}:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
+                f"[{i}:v]fps={fps},scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
                 f"boxblur=15:3[bg{i}];"
-                f"[{i}:v]scale=1080:1920:force_original_aspect_ratio=decrease[fg{i}];"
-                f"[bg{i}][fg{i}]overlay=(W-w)/2:(H-h)/2,setsar=1[v{i}]"
+                f"[{i}:v]fps={fps},scale=1080:1920:force_original_aspect_ratio=decrease[fg{i}];"
+                f"[bg{i}][fg{i}]overlay=(W-w)/2:(H-h)/2,format=yuv420p,setsar=1[v{i}]"
             )
         else:
             filters.append(
@@ -617,7 +617,10 @@ def render_reel(media, hook, duration):
             )
 
     labels = "".join(f"[v{i}]" for i in range(len(media)))
-    filters.append(f"{labels}concat=n={len(media)}:v=1:a=0,setpts=PTS-STARTPTS[vbase]")
+    filters.append(
+        f"{labels}concat=n={len(media)}:v=1:a=0,"
+        f"fps={fps},format=yuv420p,setpts=PTS-STARTPTS[vbase]"
+    )
 
     hook_clean = re.sub(r"[^A-Za-z0-9' !?-]", "", hook).upper()
     with open(FILE_HOOK_ASS, "w", encoding="utf-8") as f:
