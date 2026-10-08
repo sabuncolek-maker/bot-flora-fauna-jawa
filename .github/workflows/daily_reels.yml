@@ -1,4 +1,4 @@
-name: Generate & Post Reels 30 Detik
+name: Generate & Post Reels
 
 on:
   workflow_dispatch:
@@ -47,6 +47,7 @@ jobs:
           python -m py_compile post_reels/generate_reels.py
           python -m json.tool post_reels/spesies_bintang.json > /dev/null
           python -m json.tool post_reels/history_reels.json > /dev/null
+          POST_MODE=disabled python post_reels/generate_reels.py
 
       - name: Run Reels Pipeline
         env:
