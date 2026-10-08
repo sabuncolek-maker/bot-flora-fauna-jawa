@@ -1,15 +1,119 @@
 [
-  "Hylobates moloch",
-  "Leucopsar rothschildi",
-  "Calidris ferruginea",
-  "Nisaetus bartelsi",
-  "Macaca fascicularis",
-  "Trachypithecus auratus",
-  "Zosterops melanurus",
-  "Oreochromis mossambicus",
-  "Persea americana",
-  "Bos javanicus",
-  "Adonidia merrillii",
-  "Leptoptilos javanicus",
-  "Cuon alpinus"
+  {
+    "species": "Hylobates moloch",
+    "updated_at": null,
+    "platforms": {
+      "facebook": "legacy",
+      "instagram": "legacy",
+      "telegram": "legacy"
+    }
+  },
+  {
+    "species": "Leucopsar rothschildi",
+    "updated_at": null,
+    "platforms": {
+      "facebook": "legacy",
+      "instagram": "legacy",
+      "telegram": "legacy"
+    }
+  },
+  {
+    "species": "Calidris ferruginea",
+    "updated_at": null,
+    "platforms": {
+      "facebook": "legacy",
+      "instagram": "legacy",
+      "telegram": "legacy"
+    }
+  },
+  {
+    "species": "Nisaetus bartelsi",
+    "updated_at": null,
+    "platforms": {
+      "facebook": "legacy",
+      "instagram": "legacy",
+      "telegram": "legacy"
+    }
+  },
+  {
+    "species": "Macaca fascicularis",
+    "updated_at": null,
+    "platforms": {
+      "facebook": "legacy",
+      "instagram": "legacy",
+      "telegram": "legacy"
+    }
+  },
+  {
+    "species": "Trachypithecus auratus",
+    "updated_at": null,
+    "platforms": {
+      "facebook": "legacy",
+      "instagram": "legacy",
+      "telegram": "legacy"
+    }
+  },
+  {
+    "species": "Zosterops melanurus",
+    "updated_at": null,
+    "platforms": {
+      "facebook": "legacy",
+      "instagram": "legacy",
+      "telegram": "legacy"
+    }
+  },
+  {
+    "species": "Oreochromis mossambicus",
+    "updated_at": null,
+    "platforms": {
+      "facebook": "legacy",
+      "instagram": "legacy",
+      "telegram": "legacy"
+    }
+  },
+  {
+    "species": "Persea americana",
+    "updated_at": null,
+    "platforms": {
+      "facebook": "legacy",
+      "instagram": "legacy",
+      "telegram": "legacy"
+    }
+  },
+  {
+    "species": "Bos javanicus",
+    "updated_at": null,
+    "platforms": {
+      "facebook": "legacy",
+      "instagram": "legacy",
+      "telegram": "legacy"
+    }
+  },
+  {
+    "species": "Adonidia merrillii",
+    "updated_at": null,
+    "platforms": {
+      "facebook": "legacy",
+      "instagram": "legacy",
+      "telegram": "legacy"
+    }
+  },
+  {
+    "species": "Leptoptilos javanicus",
+    "updated_at": null,
+    "platforms": {
+      "facebook": "legacy",
+      "instagram": "legacy",
+      "telegram": "legacy"
+    }
+  },
+  {
+    "species": "Cuon alpinus",
+    "updated_at": null,
+    "platforms": {
+      "facebook": "legacy",
+      "instagram": "legacy",
+      "telegram": "legacy"
+    }
+  }
 ]
