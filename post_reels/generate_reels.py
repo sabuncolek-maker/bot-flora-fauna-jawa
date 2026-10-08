@@ -482,7 +482,15 @@ Return only narration. No title, bullets, markdown, URLs, hashtags, or citations
         print(f"Groq narration unavailable, using deterministic fallback: {exc}")
 
     text = fallback()
-    if 30 <= len(text.split()) <= 70:
+    # Deterministic fallback must be long enough for the TTS duration floor.
+    # Add only non-factual editorial pacing lines; never invent species facts.
+    pacing = [
+        "Keep watching closely, because the visual details are the clue.",
+        "This quick field note comes from Java's remarkable biodiversity.",
+    ]
+    while len(text.split()) < 42 and pacing:
+        text = f"{text} {pacing.pop(0)}"
+    if 36 <= len(text.split()) <= 70:
         print(f"Using deterministic English narration fallback ({len(text.split())} words).")
         return text
     raise RuntimeError("English narration fallback failed QA.")
@@ -621,7 +629,17 @@ Format: Layer, Start, End, Style, Text
             return duration, current_script
 
         print(f"TTS duration {duration:.1f}s is outside {VIDEO_MIN_SECONDS}-{VIDEO_MAX_SECONDS}s.")
-        if duration > VIDEO_MAX_SECONDS:
+        if duration < VIDEO_MIN_SECONDS:
+            words = current_script.split()
+            # Target ~24s, leaving headroom below the 35s ceiling.
+            target_words = min(65, max(len(words) + 8, int(len(words) * 1.28)))
+            padding = [
+                "Keep watching closely, because the visual details are the clue.",
+                "This quick field note comes from Java's remarkable biodiversity.",
+            ]
+            while len(current_script.split()) < target_words and padding:
+                current_script = f"{current_script} {padding.pop(0)}"
+        elif duration > VIDEO_MAX_SECONDS:
             words = current_script.split()
             target_words = max(38, int(len(words) * 0.84))
             if len(words) <= target_words:
@@ -814,12 +832,11 @@ def cleanup_runtime_artifacts():
                 os.remove(os.path.join(BASE_DIR, name))
             except OSError as exc:
                 print(f"Cleanup gagal: {name}: {exc}")
-    if not keep_final:
-        try:
-            if os.path.exists(FILE_FINAL):
-                os.remove(FILE_FINAL)
-        except OSError as exc:
-            print(f"Cleanup gagal: {FILE_FINAL}: {exc}")
+    try:
+        if os.path.exists(FILE_FINAL):
+            os.remove(FILE_FINAL)
+    except OSError as exc:
+        print(f"Cleanup gagal: {FILE_FINAL}: {exc}")
 
 
 def main():
