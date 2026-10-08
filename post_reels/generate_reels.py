@@ -16,6 +16,10 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FILE_AUDIO = os.path.join(BASE_DIR, "narasi.mp3")
 FILE_ASS = os.path.join(BASE_DIR, "narasi.ass")
 FILE_FINAL = os.path.join(BASE_DIR, "reels_30detik.mp4")
+
+# MASTER SWITCH posting reels. False = MATI TOTAL (tidak posting ke mana pun).
+# Diubah manual ke True kalau Indra sudah bilang siap posting lagi.
+POSTING_AKTIF = False
 FILE_HISTORY = os.path.join(BASE_DIR, "history_reels.json")
 
 GROQ_KEY = str(os.environ.get("GROQ_API_KEY") or "").strip()
@@ -836,6 +840,11 @@ def main():
         f"{naskah_caption}\n\n"
         f"#satwajawa #florafauna #indonesia #jawa #wildlife #biodiversity #indobizarre"
     )
+
+    if not POSTING_AKTIF:
+        print("POSTING DIMATIKAN (POSTING_AKTIF=False). Video dibuat tapi TIDAK diposting.")
+        print(f"Video tersimpan di: {FILE_FINAL}")
+        return
 
     if DRY_RUN:
         print(f"DRY RUN selesai. Video tersimpan di: {FILE_FINAL}")
