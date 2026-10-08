@@ -472,7 +472,8 @@ def _vision_encode_image(path, kind):
             image.thumbnail((1280, 1280))
             with tempfile.NamedTemporaryFile(suffix=".jpg") as tmp:
                 image.save(tmp.name, "JPEG", quality=82, optimize=True)
-                payload = base64.b64encode(open(tmp.name, "rb").read()).decode("utf-8")
+                with open(tmp.name, "rb") as image_file:
+                    payload = base64.b64encode(image_file.read()).decode("utf-8")
         return f"data:image/jpeg;base64,{payload}"
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -508,7 +509,8 @@ def _vision_encode_image(path, kind):
 
         with tempfile.NamedTemporaryFile(suffix=".jpg") as tmp:
             sheet.save(tmp.name, "JPEG", quality=82, optimize=True)
-            payload = base64.b64encode(open(tmp.name, "rb").read()).decode("utf-8")
+            with open(tmp.name, "rb") as image_file:
+                payload = base64.b64encode(image_file.read()).decode("utf-8")
         return f"data:image/jpeg;base64,{payload}"
 
 
@@ -674,15 +676,21 @@ def apply_vision_editor(media_items, latin, common_name):
         photo_candidates = [x for x in approved if x["kind"] == "photo" and x not in selected]
         photo_candidates.sort(key=lambda x: x.get("vision_score", 0), reverse=True)
         for replacement in photo_candidates:
-            video_items = [x for x in selected if x["kind"] == "video"]
             photos = [x for x in selected if x["kind"] == "photo"]
+            videos = [x for x in selected if x["kind"] == "video"]
             if len(photos) >= MIN_STORY_PHOTOS:
                 break
-            if video_items:
-                selected = photos[:MIN_STORY_PHOTOS] + video_items[:1]
+            if videos:
+                selected = photos + [replacement] + videos[:1]
             else:
                 selected.append(replacement)
             selected = selected[:MAX_PHOTOS]
+
+    if sum(x["kind"] == "photo" for x in selected) < MIN_STORY_PHOTOS:
+        raise RuntimeError(
+            f"Vision story gate gagal: hanya "
+            f"{sum(x['kind'] == 'photo' for x in selected)}/{MIN_STORY_PHOTOS} foto lolos."
+        )
 
     for item in selected:
         item.pop("_selection_score", None)
