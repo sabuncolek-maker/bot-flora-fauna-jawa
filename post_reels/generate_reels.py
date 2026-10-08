@@ -284,7 +284,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, Bold, Outline, Alignment, MarginV
-Style: Narasi,DejaVu Sans,40,&H00FFFFFF,&H00000000,1,3,2,80
+Style: Narasi,DejaVu Sans,40,&H00FFFFFF,&H00000000,1,3,2,150
 Style: Hook,DejaVu Sans,72,&H00FFFFFF,&H00000000,1,4,5,0
 
 [Events]
@@ -492,11 +492,14 @@ def render_multi_photo_reels(photo_files, hook_text=""):
     # PlayRes 1080x1920 = ukuran font dalam pixel asli (tanpa bug scaling SRT)
     hook_filter = ""
     if hook_text and hook_text.strip():
-        hook_ass = ASS_HEADER + f"Dialogue: 0,0:00:00.50,0:00:03.00,Hook,{hook_text.strip()}\n"
+        hook_bersih = hook_text.strip().replace("\\", "").replace("{", "").replace("}", "")
+        hook_ass = ASS_HEADER + f"Dialogue: 0,0:00:00.50,0:00:03.00,Hook,{hook_bersih}\n"
         with open(FILE_HOOK_ASS, "w", encoding="utf-8") as f_hook:
             f_hook.write(hook_ass)
         hook_filter = "ass=hook.ass"
-        print(f"Hook overlay aktif: {hook_text.strip()}")
+        print(f"Hook overlay aktif: {hook_bersih}")
+    else:
+        print("PERINGATAN: hook_text kosong, hook tidak ditampilkan!")
     # Pengaman: butuh minimal 2 foto agar reels tidak terlalu pendek
     if len(photo_files) < 2:
         raise RuntimeError(
