@@ -5,324 +5,301 @@ import time
 import random
 import asyncio
 import subprocess
+from datetime import datetime, timezone
+
 import requests
 import edge_tts
 from groq import Groq
 
-# ==========================================
-# 0. Konfigurasi Sistem & Kredensial
-# ==========================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-FILE_AUDIO = os.path.join(BASE_DIR, "narasi.mp3")
-FILE_ASS = os.path.join(BASE_DIR, "narasi.ass")
-FILE_FINAL = os.path.join(BASE_DIR, "reels_30detik.mp4")
-
-# MASTER SWITCH posting reels. False = MATI TOTAL (tidak posting ke mana pun).
-# Diubah manual ke True kalau Indra sudah bilang siap posting lagi.
-POSTING_AKTIF = False
+FILE_AUDIO = os.path.join(BASE_DIR, "narasi_en.mp3")
+FILE_ASS = os.path.join(BASE_DIR, "narasi_en.ass")
+FILE_HOOK_ASS = os.path.join(BASE_DIR, "hook_en.ass")
+FILE_FINAL = os.path.join(BASE_DIR, "reels_english.mp4")
 FILE_HISTORY = os.path.join(BASE_DIR, "history_reels.json")
-
-GROQ_KEY = str(os.environ.get("GROQ_API_KEY") or "").strip()
-FB_TOKEN = str(os.environ.get("FB_PAGE_ACCESS_TOKEN") or "").strip()
-FB_PAGE_ID = str(os.environ.get("FB_PAGE_ID") or "").strip()
-TELEGRAM_TOKEN = str(os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
-TELEGRAM_CHAT_ID = str(os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
-
-if not GROQ_KEY:
-    raise ValueError("GROQ_API_KEY belum terpasang di GitHub Secrets!")
-
-HEADERS_BROWSER = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-}
-
-# ==========================================
-# 1. Manajemen Riwayat Anti-Duplikasi
-# ==========================================
-def load_history():
-    """Membaca riwayat spesies yang sudah pernah diposting"""
-    if os.path.exists(FILE_HISTORY):
-        try:
-            with open(FILE_HISTORY, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return []
-    return []
-
-def save_to_history(species_name):
-    """Menyimpan spesies ke catatan riwayat agar tidak dobel"""
-    history = load_history()
-    if species_name not in history:
-        history.append(species_name)
-    if len(history) > 60:
-        history = history[-60:]
-    with open(FILE_HISTORY, "w", encoding="utf-8") as f:
-        json.dump(history, f, indent=2)
-
-# ==========================================
-# 2. Target Spesies Liar Jawa (GBIF API)
-# ==========================================
 FILE_BINTANG = os.path.join(BASE_DIR, "spesies_bintang.json")
 
-def load_spesies_bintang():
-    """Baca daftar spesies bintang yang sudah dikurasi manual.
+# SAFETY: Reels remains disabled until explicitly changed.
+# disabled = build nothing beyond validation; dry_run = render/review only; production = publish.
+POST_MODE = os.environ.get("POST_MODE", "disabled").strip().lower()
+VOICE = "en-US-JennyNeural"
+MIN_PHOTOS = 4
+MAX_PHOTOS = 6
+VIDEO_MIN_SECONDS = 22.0
+VIDEO_MAX_SECONDS = 35.0
+FB_API = "https://graph.facebook.com/v21.0"
+HEADERS = {"User-Agent": "FloraFaunaJawa/2.0"}
 
-    KENAPA ada file ini: GBIF mengembalikan spesies acak tanpa filter
-    "menarik". Daftar ini berisi ~20 spesies Jawa yang sudah diverifikasi
-    asli Jawa dan punya fakta superlatif (terbesar/terkecil/paling langka).
-    """
+GROQ_KEY = os.environ.get("GROQ_API_KEY", "").strip()
+FB_TOKEN = os.environ.get("FB_PAGE_ACCESS_TOKEN", "").strip()
+FB_PAGE_ID = os.environ.get("FB_PAGE_ID", "").strip()
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+
+if not GROQ_KEY:
+    raise RuntimeError("GROQ_API_KEY belum terpasang.")
+
+def http_json(method, url, retries=3, timeout=30, **kwargs):
+    last = None
+    for attempt in range(retries):
+        try:
+            r = requests.request(method, url, timeout=timeout, **kwargs)
+            if r.status_code in {408, 425, 429, 500, 502, 503, 504} and attempt < retries - 1:
+                time.sleep(2 ** attempt + random.random())
+                continue
+            r.raise_for_status()
+            return r.json()
+        except (requests.RequestException, ValueError) as exc:
+            last = exc
+            if attempt < retries - 1:
+                time.sleep(2 ** attempt + random.random())
+    raise RuntimeError(f"HTTP gagal setelah {retries} percobaan: {url}") from last
+
+def http_bytes(url, retries=3, timeout=30):
+    last = None
+    for attempt in range(retries):
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=timeout)
+            if r.status_code in {408, 425, 429, 500, 502, 503, 504} and attempt < retries - 1:
+                time.sleep(2 ** attempt + random.random())
+                continue
+            r.raise_for_status()
+            content_type = (r.headers.get("content-type") or "").lower()
+            data = r.content
+            valid_magic = (
+                data.startswith(b"\xff\xd8\xff") or
+                data.startswith(b"\x89PNG\r\n\x1a\n") or
+                (data.startswith(b"RIFF") and data[8:12] == b"WEBP")
+            )
+            if not valid_magic or ("image/" not in content_type and not content_type.startswith("application/octet-stream")):
+                raise RuntimeError("Response bukan file gambar valid.")
+            return data
+        except (requests.RequestException, RuntimeError) as exc:
+            last = exc
+            if attempt < retries - 1:
+                time.sleep(2 ** attempt + random.random())
+    raise RuntimeError(f"Download gambar gagal setelah {retries} percobaan: {url}") from last
+
+def load_history():
     try:
-        with open(FILE_BINTANG, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        print(f"Gagal baca spesies_bintang.json: {e}")
+        with open(FILE_HISTORY, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except Exception:
         return []
 
-def get_species_target():
+def save_history_record(species, platform_status):
     history = load_history()
-    bintang = load_spesies_bintang()
-    bintang_tersedia = [s for s in bintang if s["latin"] not in history]
+    record = {
+        "species": species,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "platforms": platform_status,
+    }
+    history = [x for x in history if x.get("species") != species] + [record]
+    with open(FILE_HISTORY, "w", encoding="utf-8") as f:
+        json.dump(history, f, ensure_ascii=False, indent=2)
+        f.write("\n")
 
-    # 70% pilih dari daftar bintang (sudah kurasi, faktanya akurat),
-    # 30% random dari GBIF (variasi). KENAPA: daftar bintang menjamin
-    # kualitas & akurasi, GBIF memberi kejutan spesies baru.
-    if bintang_tersedia and random.random() < 0.7:
-        pilih = random.choice(bintang_tersedia)
-        print(f"Target dari daftar bintang: {pilih['latin']} ({pilih['indonesia']})")
-        return pilih["latin"]
+def load_species():
+    with open(FILE_BINTANG, encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, list) or not data:
+        raise RuntimeError("spesies_bintang.json kosong/tidak valid.")
+    required = {"latin", "indonesia", "fakta_hook", "fakta_singkat"}
+    for item in data:
+        if not required.issubset(item):
+            raise RuntimeError(f"Entry spesies tidak lengkap: {item}")
+    return data
 
-    kandidat = []
-    try:
-        polygon_jawa = "POLYGON((105.1 -5.8, 114.6 -5.8, 114.6 -8.8, 105.1 -8.8, 105.1 -5.8))"
-        url = "https://api.gbif.org/v1/occurrence/search"
-        params = {
-            "country": "ID",
-            "geometry": polygon_jawa,
-            "iucnRedListCategory": ["CR", "EN", "VU"],
-            "hasCoordinate": "true",
-            "limit": 40,
-            "offset": random.randint(0, 150)
-        }
-        res = requests.get(url, params=params, headers=HEADERS_BROWSER, timeout=12).json()
-        results = res.get("results", [])
-        semua_spesies = list(set([item.get("species") for item in results if item.get("species")]))
-        kandidat = [s for s in semua_spesies if s not in history]
-    except Exception as e:
-        print(f"Kendala GBIF: {e}")
+def gbif_occurrence_exists(latin):
+    polygon = "POLYGON((105.1 -5.8, 114.6 -5.8, 114.6 -8.8, 105.1 -8.8, 105.1 -5.8))"
+    data = http_json("GET", "https://api.gbif.org/v1/occurrence/search", timeout=20,
+                     params={"scientificName": latin, "geometry": polygon, "hasCoordinate": "true", "limit": 1})
+    return bool(data.get("results"))
 
-    if kandidat:
-        return random.choice(kandidat)
+def choose_target():
+    species = load_species()
+    history = {x.get("species") for x in load_history() if isinstance(x, dict)}
+    available = [s for s in species if s["latin"] not in history]
+    if not available:
+        available = species
+    random.shuffle(available)
+    for item in available:
+        try:
+            if gbif_occurrence_exists(item["latin"]):
+                print(f"Verified Java occurrence: {item['latin']}")
+                return item
+        except Exception as exc:
+            print(f"GBIF check gagal untuk {item['latin']}: {exc}")
+    raise RuntimeError("Tidak ada spesies kurasi dengan occurrence GBIF Jawa yang tervalidasi.")
 
-    # Cadangan: pakai daftar bintang yang belum dipakai
-    if bintang_tersedia:
-        return random.choice(bintang_tersedia)["latin"]
-    # Terakhir: semua bintang (reset siklus)
-    if bintang:
-        return random.choice(bintang)["latin"]
-    return "Panthera pardus melas"
-
-# ==========================================
-# 3. Ambil 6 Foto Alam Liar (iNaturalist & Wiki)
-# ==========================================
-def download_6_photos(scientific_name):
+def get_photo_candidates(latin):
     urls = []
+    sources = []
     try:
-        url_inat = f"https://api.inaturalist.org/v1/observations?taxon_name={requests.utils.quote(scientific_name)}&has[]=photos&quality_grade=research&license=cc0,cc-by&per_page=15"
-        res_inat = requests.get(url_inat, headers=HEADERS_BROWSER, timeout=10).json()
-        for item in res_inat.get("results", []):
-            for photo in item.get("photos", []):
-                link = photo.get("url", "").replace("square", "large")
-                if link and link not in urls:
-                    urls.append(link)
-                if len(urls) >= 6:
-                    break
-            if len(urls) >= 6:
+        data = http_json("GET", "https://api.inaturalist.org/v1/observations",
+                         params={"taxon_name": latin, "has[]": "photos", "quality_grade": "research",
+                                 "license": "cc0,cc-by", "per_page": 30}, timeout=20)
+        for obs in data.get("results", []):
+            for photo in obs.get("photos", []):
+                url = (photo.get("url") or "").replace("/square.", "/large.")
+                if url and url not in urls:
+                    urls.append(url)
+                    sources.append({"source": "iNaturalist", "url": url, "license": "CC0/CC BY"})
+                if len(urls) >= MAX_PHOTOS:
+                    return list(zip(urls, sources))
+    except Exception as exc:
+        print(f"iNaturalist gagal: {exc}")
+    try:
+        data = http_json("GET", f"https://en.wikipedia.org/api/rest_v1/page/summary/{requests.utils.quote(latin)}",
+                         timeout=15)
+        img = (data.get("originalimage") or {}).get("source")
+        if img and not any(x in img.lower() for x in [".svg", "map", "range", "distribution", "illustration", "plate"]):
+            if img not in urls:
+                urls.append(img)
+                sources.append({"source": "Wikimedia/Wikipedia", "url": img, "license": "verify Commons license"})
+    except Exception as exc:
+        print(f"Wikipedia gagal: {exc}")
+    return list(zip(urls, sources))
+
+def download_species_photos(latin):
+    candidates = get_photo_candidates(latin)
+    saved = []
+    metadata = []
+    for idx, (url, meta) in enumerate(candidates, 1):
+        try:
+            data = http_bytes(url)
+            path = os.path.join(BASE_DIR, f"foto_{idx}.jpg")
+            with open(path, "wb") as f:
+                f.write(data)
+            # ffprobe is a second-stage media sanity check.
+            probe = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
+                                    "-show_entries", "stream=width,height", "-of", "csv=p=0", path],
+                                   capture_output=True, text=True, timeout=10)
+            if probe.returncode != 0 or not probe.stdout.strip():
+                continue
+            saved.append(path)
+            metadata.append(meta)
+            if len(saved) >= MAX_PHOTOS:
                 break
-    except Exception as e:
-        print(f"Kendala iNaturalist: {e}")
+        except Exception as exc:
+            print(f"Foto ditolak: {url} ({exc})")
+    if len(saved) < MIN_PHOTOS:
+        raise RuntimeError(f"Hanya {len(saved)} foto spesifik valid ditemukan untuk {latin}; minimum {MIN_PHOTOS}.")
+    with open(os.path.join(BASE_DIR, "photo_sources.json"), "w", encoding="utf-8") as f:
+        json.dump(metadata, f, ensure_ascii=False, indent=2)
+    return saved
 
-    if len(urls) < 6:
-        try:
-            url_wiki = f"https://en.wikipedia.org/api/rest_v1/page/summary/{requests.utils.quote(scientific_name)}"
-            r = requests.get(url_wiki, headers=HEADERS_BROWSER, timeout=10).json()
-            if "originalimage" in r:
-                w_url = r["originalimage"]["source"]
-                kata_tolak = [".svg", "map", "range", "drawing", "illustration", "plate"]
-                if w_url not in urls and not any(k in w_url.lower() for k in kata_tolak):
-                    urls.append(w_url)
-        except Exception:
-            pass
-
-    cadangan = [
-        "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1080",
-        "https://images.unsplash.com/photo-1448375240586-882707db888b?w=1080",
-        "https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?w=1080",
-        "https://images.unsplash.com/photo-1425934398893-310a00990186?w=1080",
-        "https://images.unsplash.com/photo-1501854140801-50d01698950b?w=1080",
-        "https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=1080"
-    ]
-    for c in cadangan:
-        if len(urls) >= 6:
-            break
-        if c not in urls:
-            urls.append(c)
-
-    saved_files = []
-    for idx, img_url in enumerate(urls[:6], start=1):
-        file_path = os.path.join(BASE_DIR, f"foto_{idx}.jpg")
-        try:
-            r = requests.get(img_url, headers=HEADERS_BROWSER, timeout=15)
-            if r.status_code == 200 and len(r.content) > 8000:
-                with open(file_path, "wb") as f:
-                    f.write(r.content)
-                saved_files.append(file_path)
-            else:
-                r_fallback = requests.get(cadangan[idx-1], headers=HEADERS_BROWSER, timeout=15)
-                with open(file_path, "wb") as f:
-                    f.write(r_fallback.content)
-                saved_files.append(file_path)
-        except Exception:
-            pass
-
-    return saved_files
-
-# ==========================================
-# 4. Naskah Narasi Dokumenter (Groq AI)
-# ==========================================
-def generate_naskah_indonesia(scientific_name, nama_indonesia=""):
-    """Narasi dokumenter satwa dalam Bahasa Indonesia.
-
-    DUA TAHAP (agar narasi natural tapi subtitle tetap modern):
-    1. Groq bikin narasi NATURAL (kalimat normal seperti ngobrol, bukan teriak-teriak)
-    2. Python memecah jadi segmen subtitle + menandai kata kunci otomatis
-    """
+def generate_english_script(item):
     client = Groq(api_key=GROQ_KEY)
-    fakta_panduan = ""
-    for s in load_spesies_bintang():
-        if s["latin"].lower() == scientific_name.lower():
-            fakta_panduan = f"Fakta yang HARUS akurat: {s['fakta_singkat']} "
-            break
-    prompt = f"""
-    Tulis narasi dokumenter satwa liar dalam Bahasa Indonesia tentang '{scientific_name}' ({nama_indonesia}) dari Pulau Jawa.
-    {fakta_panduan}
-    Gaya: seperti narator dokumenter profesional yang tenang dan berwibawa. Kalimat normal dan natural,
-    seperti sedang bercerita. JANGAN pakai gaya YouTuber heboh ("hay teman-teman!", "wow amazing!").
-    JANGAN pakai huruf kapital semua. Tulis seperti naskah berita yang dibacakan dengan tenang.
-    Panjang: 4-6 kalimat pendek. Total sekitar 25-35 detik jika dibacakan pelan.
-    ATURAN KERAS akurasi: DILARANG menyebut habitat atau latar spesifik yang tidak terverifikasi
-    (jangan tulis "hutan lebat", "lereng berkabut", "kanopi hutan", "rawa", "puncak gunung" atau sejenisnya).
-    Fokus hanya pada: apa spesiesnya, fakta uniknya, perilakunya, dan kenapa ia istimewa.
-    Kembalikan HANYA teks narasi. Tanpa markdown, tanpa judul, tanpa nomor, TANPA URL/link apapun.
-    """
-    completion = client.chat.completions.create(
-        model="openai/gpt-oss-120b",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.5
+    prompt = f"""Write a short wildlife documentary narration in natural English about {item['latin']} ({item['indonesia']}) from Java, Indonesia.
+
+ONLY use these editorial facts as factual claims:
+- {item['fakta_singkat']}
+Do not invent population numbers, locations, measurements, behavior, conservation status, superlatives, or habitat details.
+Do not turn uncertain claims into absolute claims.
+Length: 70-95 words, suitable for roughly 25-32 seconds at a calm pace.
+Tone: calm, cinematic, intelligent, documentary-style. No YouTuber language.
+Return only the narration, no title, bullets, markdown, URLs, or citations."""
+    r = client.chat.completions.create(model="openai/gpt-oss-120b",
+                                       messages=[{"role": "user", "content": prompt}],
+                                       temperature=0.2, max_tokens=180)
+    text = re.sub(r"\s+", " ", r.choices[0].message.content.strip()).strip()
+    if not (45 <= len(text.split()) <= 105):
+        raise RuntimeError("Narration length di luar batas QA.")
+    return text
+
+def generate_english_hook(item):
+    # Hook is derived from the curated editorial hook, translated/reframed,
+    # never invented from a random LLM claim.
+    hooks = {
+        "BUNGA PARASIT LANGKA": "RARE PARASITIC BLOOM",
+        "BUNGA ABADI GUNUNG": "THE MOUNTAIN EVERLASTING",
+        "GARUDA INDONESIA": "JAVA'S ICONIC EAGLE",
+        "HANTU HUTAN JAWA": "JAVA'S ELUSIVE CAT",
+        "TERLANGKA DI DUNIA": "ONE OF EARTH'S RAREST RHINOS",
+        "PENYANYI HUTAN": "THE FOREST SINGER",
+        "MONYET BERJENGGOT": "JAVA'S BEARDED LEAF MONKEY",
+        "BAYI EMAS": "THE GOLDEN BABY",
+        "KODOK BERDARAH": "THE RED FROG",
+        "PRIMATA BERBISA": "THE VENOMOUS PRIMATE",
+        "SISIK BAJA": "THE ARMORED MAMMAL",
+        "ANJING HUTAN": "JAVA'S WILD DOG",
+        "MERAK ASLI JAWA": "JAVA'S GREEN PEAFOWL",
+        "KATAK BISA TERBANG": "THE FLYING FROG",
+        "KUCING HUTAN MINI": "THE TINY WILDCAT",
+        "BANTENG LIAR": "JAVA'S WILD BANTENG",
+        "RAKSASA PEMBERSIH": "THE FOREST CLEANER",
+        "TANAMAN PEMANGSA": "THE CARNIVOROUS PLANT",
+        "KOPI TERMAHAL DUNIA": "THE CIVET BEHIND KOPI LUWAK",
+        "NAGA JAWA": "JAVA'S GIANT LIZARD",
+    }
+    return hooks.get(item["fakta_hook"], "WILDLIFE OF JAVA")
+
+def segment_script(text):
+    sentences = [x.strip() for x in re.split(r"(?<=[.!?])\s+", text) if x.strip()]
+    segments = []
+    for sentence in sentences:
+        words = sentence.split()
+        for i in range(0, len(words), 7):
+            chunk = words[i:i+7]
+            if chunk:
+                segments.append(" ".join(chunk))
+    if not segments:
+        raise RuntimeError("Subtitle segmentation kosong.")
+    return segments
+
+def norm_word(word):
+    return re.sub(r"[^a-z0-9']", "", word.lower())
+
+async def make_tts_and_subtitles(script, segments):
+    tts_text = " ".join(segments)
+    communicator = edge_tts.Communicate(
+        tts_text, VOICE, rate="-12%", pitch="-2Hz"
     )
-    narasi_natural = completion.choices[0].message.content.strip().replace('"', '')
-    print(f"Narasi natural:\n{narasi_natural}\n")
-
-    # TAHAP 2: pecah jadi segmen subtitle + tandai kata kunci
-    # Kata kunci = angka, nama spesies, dan kata sifat superlatif
-    naskah_segmen = segmentasi_untuk_subtitle(narasi_natural, scientific_name, nama_indonesia)
-    print(f"Naskah segmen subtitle:\n{naskah_segmen}\n")
-    return naskah_segmen
-
-
-def segmentasi_untuk_subtitle(narasi, scientific_name="", nama_indonesia=""):
-    """Pecah narasi natural jadi segmen subtitle pendek + tandai kata kunci.
-
-    Aturan:
-    - Tiap segmen: maksimal 8 kata (cukup untuk 2 baris di layar)
-    - Kata kunci (angka, nama spesies, superlatif) ditandai *bintang*
-    - Output: HURUF KAPITAL, segmen dipisah baris kosong
-    """
-    import re
-    # Pecah jadi kalimat
-    kalimat_list = [k.strip() for k in re.split(r'(?<=[.!?])\s+', narasi) if k.strip()]
-    segmen_list = []
-    for kalimat in kalimat_list:
-        kata = kalimat.split()
-        # Pecah kalimat panjang jadi potongan max 8 kata
-        for i in range(0, len(kata), 8):
-            potongan = kata[i:i+8]
-            segmen_list.append(' '.join(potongan))
-
-    # Tandai kata kunci: angka, nama latin, nama indonesia, superlatif
-    superlatif = ['terbesar', 'terkecil', 'terlangka', 'tercepat', 'terpanjang',
-                  'paling', 'satu-satunya', 'langka', 'unik', 'raksasa',
-                  'berbisa', 'beracun', 'terancam', 'endemik']
-    hasil_segmen = []
-    for segmen in segmen_list:
-        kata_baru = []
-        for w in segmen.split():
-            w_bersih = re.sub(r'[^a-zA-Z0-9-]', '', w).lower()
-            is_angka = bool(re.search(r'\d', w))
-            is_nama = (scientific_name.lower() in w_bersih or
-                       (nama_indonesia and nama_indonesia.lower() in w_bersih))
-            is_superlatif = w_bersih in superlatif
-            if is_angka or is_nama or is_superlatif:
-                # Tandai tapi pertahankan tanda baca asli
-                kata_baru.append(f"*{w}*")
-            else:
-                kata_baru.append(w)
-        hasil_segmen.append(' '.join(kata_baru).upper())
-
-    return '\n\n'.join(hasil_segmen)
-
-def generate_hook_text(scientific_name, nama_indonesia=""):
-    """
-    Membuat teks hook (pancingan) untuk 3 detik pertama video.
-    Apa itu: 2-4 kata provokatif HURUF BESAR yang muncul besar di tengah layar.
-    Kenapa: penonton memutuskan lanjut nonton atau scroll dalam 3 detik
-    pertama. Hook yang kuat menaikkan retensi video secara signifikan.
-    Bahasa: Indonesia (audiens FB/IG Indonesia).
-    """
-    # Kalau spesies ada di daftar bintang, pakai fakta_hook yang sudah kurasi
-    # (lebih akurat daripada minta LLM mengarang).
-    for s in load_spesies_bintang():
-        if s["latin"].lower() == scientific_name.lower():
-            hook = s["fakta_hook"]
-            print(f"Hook (dari daftar bintang): {hook}")
-            return hook
+    audio_chunks, bounds = [], []
     try:
-        client = Groq(api_key=GROQ_KEY)
-        prompt = f"""
-        Buatkan SATU teks hook pendek dalam Bahasa Indonesia untuk video tentang '{scientific_name}' ({nama_indonesia}) dari Pulau Jawa.
-        Aturan: MAKSIMAL 4 kata, HURUF BESAR semua, provokatif, bikin penasaran.
-        Contoh yang bagus: "BUNGA TERBESAR", "RACUN MEMATIKAN", "HANTU HUTAN JAWA", "TERKECIL DI DUNIA"
-        Jawab HANYA teks hook-nya, tanpa penjelasan.
-        """
-        completion = client.chat.completions.create(
-            model="openai/gpt-oss-120b",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.7,
-            max_tokens=30,
-        )
-        hook = completion.choices[0].message.content.strip().replace('"', '').upper()
-        print(f"Hook: {hook}")
-        return hook
-    except Exception as e:
-        print(f"Gagal buat hook, pakai bawaan: {e}")
-        return "SATWA LANGKA JAWA"
+        async for chunk in communicator.stream():
+            if chunk["type"] == "audio":
+                audio_chunks.append(chunk["data"])
+            elif chunk["type"] == "WordBoundary":
+                word = norm_word(chunk.get("text", ""))
+                if word:
+                    start = chunk["offset"] / 10_000_000
+                    end = start + chunk["duration"] / 10_000_000
+                    bounds.append((word, start, end))
+    except Exception as exc:
+        raise RuntimeError(f"English TTS/WordBoundary gagal: {exc}") from exc
+    if not audio_chunks or not bounds:
+        raise RuntimeError("WordBoundary tidak tersedia; Reels dihentikan agar subtitle tidak menebak timing.")
+    with open(FILE_AUDIO, "wb") as f:
+        for chunk in audio_chunks:
+            f.write(chunk)
 
-# ==========================================
-# 5. Audio & Subtitle Per Kalimat (Edge-TTS)
-# ==========================================
-def format_srt_time(seconds):
-    millis = int((seconds - int(seconds)) * 1000)
-    secs = int(seconds) % 60
-    mins = int(seconds // 60) % 60
-    hours = int(seconds // 3600)
-    return f"{hours:02d}:{mins:02d}:{secs:02d},{millis:03d}"
+    segment_times = []
+    cursor = 0
+    for segment in segments:
+        words = [norm_word(w) for w in segment.split() if norm_word(w)]
+        starts = []
+        ends = []
+        for word in words:
+            found = None
+            for j in range(cursor, len(bounds)):
+                if bounds[j][0] == word:
+                    found = j
+                    break
+            if found is None:
+                raise RuntimeError(f"WordBoundary mapping gagal pada kata: {word}")
+            starts.append(bounds[found][1])
+            ends.append(bounds[found][2])
+            cursor = found + 1
+        segment_times.append((starts[0], ends[-1]))
 
-def format_ass_time(seconds):
-    cs = int((seconds - int(seconds)) * 100)
-    secs = int(seconds) % 60
-    mins = int(seconds // 60) % 60
-    hours = int(seconds // 3600)
-    return f"{hours}:{mins:02d}:{secs:02d}.{cs:02d}"
-
-ASS_HEADER = """[Script Info]
+    # Hook occupies the first 3 seconds, so both audio and subtitles start after it.
+    offset = 3.0
+    shifted = [(a + offset, b + offset) for a, b in segment_times]
+    with open(FILE_ASS, "w", encoding="utf-8") as f:
+        f.write("""[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
 PlayResY: 1920
@@ -330,549 +307,200 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, Bold, Outline, Alignment, MarginV
-Style: Narasi,DejaVu Sans,40,&H00FFFFFF,&H00000000,1,3,2,150
-Style: Hook,DejaVu Sans,72,&H00FFFFFF,&H00000000,1,4,5,0
+Style: Narasi,DejaVu Sans,44,&H00FFFFFF,&H00000000,1,3,2,210
 
 [Events]
 Format: Layer, Start, End, Style, Text
-"""
+""")
+        for segment, (start, end) in zip(segments, shifted):
+            safe = segment.replace("{", "").replace("}", "")
+            f.write(f"Dialogue: 0,{ass_time(start)},{ass_time(end)},Narasi,{safe.upper()}\\N\n")
+    duration = probe_duration(FILE_AUDIO) + offset
+    if duration < VIDEO_MIN_SECONDS or duration > VIDEO_MAX_SECONDS:
+        raise RuntimeError(f"Final duration {duration:.1f}s di luar {VIDEO_MIN_SECONDS}-{VIDEO_MAX_SECONDS}s.")
+    return duration
 
-async def create_audio_and_clean_subtitles(text):
-    """
-    Membuat audio TTS dan subtitle gaya modern (TikTok/Reels) yang SINKRON
-    dengan suara narator.
+def ass_time(seconds):
+    cs = int((seconds - int(seconds)) * 100)
+    total = int(seconds)
+    return f"{total // 3600}:{(total // 60) % 60:02d}:{total % 60:02d}.{cs:02d}"
 
-    SINKRONISASI (wajib, bukan opsional):
-    - Audio di-generate via edge-tts stream() yang menghasilkan WordBoundary
-      (timestamp tiap kata dalam 100-nanosecond ticks)
-    - Tiap segmen subtitle dipetakan ke kata-katanya -> timing diambil dari
-      timestamp aktual narator, BUKAN tebakan proporsional
-    - Fallback berlapis jika WordBoundary tidak tersedia:
-      1) ukur durasi audio aktual via ffprobe, bagi proporsional per kata
-      2) terakhir: estimasi 26 detik (seperti sebelumnya)
+def probe_duration(path):
+    r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                        "-of", "default=noprint_wrappers=1:nokey=1", path],
+                       capture_output=True, text=True, timeout=10)
+    if r.returncode != 0:
+        raise RuntimeError("ffprobe gagal.")
+    return float(r.stdout.strip())
 
-    Format input dari Groq: narasi ter-segmentasi, tiap segmen max 2 baris,
-    kata kunci ditandai *bintang*.
-    - TTS: teks bersih (tanpa *bintang*) agar dibaca natural
-    - SRT: *kata kunci* diubah jadi tag warna kuning ASS {\\c&H00D7FF&}
-    - Posisi subtitle: 58% dari atas layar (tidak menutupi hewan di tengah)
-    - Font subtitle (26) LEBIH KECIL dari hook (36) -> hierarki visual jelas
-    """
-    voice = "id-ID-GadisNeural"  # Bahasa Indonesia, suara wanita yang tenang (permintaan Indra)
-
-    # --- Parse segmen dari format Groq ---
-    text_bersih = re.sub(r'```[a-z]*\n?', '', text).replace('```', '').strip()
-    blok_mentah = [b.strip() for b in re.split(r'\n\s*\n', text_bersih) if b.strip()]
-
-    segmen_list = []
-    for blok in blok_mentah:
-        baris = [br.strip().upper() for br in blok.split('\n') if br.strip()]
-        if baris:
-            segmen_list.append(baris[:2])
-
-    if not segmen_list:
-        kalimat_list = [k.strip().upper() for k in re.split(r'(?<=[.!?])\s+', text_bersih) if k.strip()]
-        segmen_list = [[k] for k in kalimat_list] if kalimat_list else [[text_bersih.upper()]]
-
-    # --- Teks untuk TTS: hapus *bintang*, normalisasi kapitalisasi ---
-    def normalisasi_kata(w):
-        return re.sub(r'[^a-zA-Z0-9]', '', w).lower()
-
-    teks_tts = re.sub(r'\*([^*]+)\*', r'\1', '\n'.join(' '.join(s) for s in segmen_list))
-    # BERSIHKAN untuk TTS: buang URL, markdown, karakter aneh agar tidak dibaca aneh
-    teks_tts = re.sub(r'https?://\S+', '', teks_tts)  # buang URL
-    teks_tts = re.sub(r'www\.\S+', '', teks_tts)  # buang www.
-    teks_tts = re.sub(r'[#*_`~|]', '', teks_tts)  # buang markdown
-    teks_tts = re.sub(r'\s+', ' ', teks_tts).strip()  # rapikan spasi
-    teks_tts = teks_tts.capitalize()
-    print(f"Teks untuk TTS (bersih): {teks_tts[:150]}...")
-
-    # Kata per segmen (bersih, untuk pemetaan ke WordBoundary)
-    kata_per_segmen = []
-    for segmen in segmen_list:
-        kata = [normalisasi_kata(w) for w in ' '.join(segmen).replace('*', '').split()]
-        kata_per_segmen.append([k for k in kata if k])
-
-    # --- Generate audio via stream + kumpulkan WordBoundary ---
-    # SSML: rate -18% (lebih lambat, tenang) + pitch -7% (lebih hangat)
-    # Alasan: suara default GadisNeural terlalu cepat dan cempreng menurut Indra
-    ssml_tts = (
-        '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="id-ID">'
-        f'<voice name="{voice}">'
-        f'<prosody rate="-18%" pitch="-7%">{teks_tts}</prosody>'
-        '</voice></speak>'
-    )
-    tts = edge_tts.Communicate(ssml_tts, voice)
-    word_bounds = []  # [(kata_normalisasi, start_detik, end_detik)]
-    audio_chunks = []
-    try:
-        async for chunk in tts.stream():
-            if chunk["type"] == "audio":
-                audio_chunks.append(chunk["data"])
-            elif chunk["type"] == "WordBoundary":
-                # offset & duration dalam 100-nanosecond ticks -> detik
-                wb_start = chunk["offset"] / 10_000_000
-                wb_end = wb_start + (chunk["duration"] / 10_000_000)
-                wb_kata = normalisasi_kata(chunk.get("text", ""))
-                if wb_kata:
-                    word_bounds.append((wb_kata, wb_start, wb_end))
-        with open(FILE_AUDIO, "wb") as f_audio:
-            for ch in audio_chunks:
-                f_audio.write(ch)
-        print(f"TTS selesai: {len(word_bounds)} WordBoundary terkumpul")
-    except Exception as e:
-        print(f"Stream TTS gagal ({e}), fallback ke save biasa")
-        await edge_tts.Communicate(ssml_tts, voice).save(FILE_AUDIO)
-        word_bounds = []
-
-    # --- Hitung timing tiap segmen ---
-    # Metode 1 (ideal): petakan kata segmen ke WordBoundary secara berurutan
-    segmen_timing = []  # [(start, end)]
-    if word_bounds:
-        idx_wb = 0
-        for kata_seg in kata_per_segmen:
-            t_start, t_end = None, None
-            for k in kata_seg:
-                # Cari kata yang cocok mulai dari posisi terakhir (berurutan)
-                found = False
-                for j in range(idx_wb, len(word_bounds)):
-                    if word_bounds[j][0] == k:
-                        if t_start is None:
-                            t_start = word_bounds[j][1]
-                        t_end = word_bounds[j][2]
-                        idx_wb = j + 1
-                        found = True
-                        break
-                if not found:
-                    # Kata tidak ketemu (beda tokenisasi) -> lewati, pakai estimasi
-                    break
-            if t_start is not None and t_end is not None:
-                segmen_timing.append((t_start, t_end))
-            else:
-                segmen_timing.append((None, None))
-        # Isi yang gagal dipetakan dengan interpolasi dari tetangga
-        for i in range(len(segmen_timing)):
-            if segmen_timing[i][0] is None:
-                # Cari tetangga terdekat yang valid
-                prev_end = 3.0
-                for j in range(i - 1, -1, -1):
-                    if segmen_timing[j][0] is not None:
-                        prev_end = segmen_timing[j][1]
-                        break
-                next_start = None
-                for j in range(i + 1, len(segmen_timing)):
-                    if segmen_timing[j][0] is not None:
-                        next_start = segmen_timing[j][0]
-                        break
-                if next_start is None:
-                    # Estimasi: 2 detik per segmen yang tersisa
-                    next_start = prev_end + 2.0
-                segmen_timing[i] = (prev_end, min(next_start, prev_end + 3.0))
-
-    # Metode 2 (fallback): ukur durasi audio aktual via ffprobe, bagi proporsional
-    if not segmen_timing or not word_bounds:
-        durasi_audio = 0
-        try:
-            r = subprocess.run(
-                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                 "-of", "default=noprint_wrappers=1:nokey=1", FILE_AUDIO],
-                capture_output=True, text=True, timeout=10
-            )
-            durasi_audio = float(r.stdout.strip())
-            print(f"Durasi audio aktual (ffprobe): {durasi_audio:.1f}s")
-        except Exception as e:
-            print(f"ffprobe gagal ({e}), pakai estimasi 26s")
-            durasi_audio = 26.0
-        total_kata = sum(len(ks) for ks in kata_per_segmen) or 1
-        waktu_mulai = 3.0
-        segmen_timing = []
-        for kata_seg in kata_per_segmen:
-            dur = max(1.5, (len(kata_seg) / total_kata) * durasi_audio)
-            segmen_timing.append((waktu_mulai, waktu_mulai + dur))
-            waktu_mulai += dur
-
-    # --- Bangun SRT dengan tag warna kuning + timing sinkron ---
-    # Geser semua timing +3.0 detik agar mulai SETELAH hook text (hindari overlap).
-    # Tapi jangan melebihi durasi video (~30 detik).
-    OFFSET_HOOK = 3.0
-
-    def warnai_kuning(baris_teks):
-        # Pakai lambda: hindari masalah escape \1 di re.sub replacement string.
-        # Output: {\c&H00D7FF&}kata kunci{\c} (format ASS yang benar)
-        return re.sub(r'\*([^*]+)\*',
-                      lambda m: '{\\c&H00D7FF&}' + m.group(1) + '{\\c}',
-                      baris_teks)
-
-    ass_events = []
-    for i, (segmen, (t0, t1)) in enumerate(zip(segmen_list, segmen_timing), start=1):
-        # Jika pakai WordBoundary (timing sudah aktual), tambahkan offset hook
-        # Jika fallback proporsional, timing sudah dimulai dari 3.0
-        if word_bounds:
-            t0, t1 = t0 + OFFSET_HOOK, t1 + OFFSET_HOOK
-        baris_ass = '\\N'.join(warnai_kuning(b) for b in segmen)
-        ass_events.append(f"Dialogue: 0,{format_ass_time(t0)},{format_ass_time(t1)},Narasi,{baris_ass}")
-
-    with open(FILE_ASS, "w", encoding="utf-8") as f_sub:
-        f_sub.write(ASS_HEADER + "\n".join(ass_events) + "\n")
-    metode = "WordBoundary (sinkron presisi)" if word_bounds else "proporsional (fallback)"
-    print(f"Audio MP3 dan Subtitle modern selesai! ({len(segmen_list)} segmen, metode: {metode})")
-
-# ==========================================
-# 6. Render Video 6 Foto & Hardsub (FFmpeg)
-# ==========================================
-FILE_HOOK_ASS = os.path.join(BASE_DIR, "hook.ass")
-
-def render_multi_photo_reels(photo_files, hook_text=""):
-    """
-    Render reels:
-    1. BACKGROUND BLUR - gambar tampil UTUH (fit) di atas background blur,
-       tidak dipotong seperti sebelumnya
-    2. GERAKAN HALUS - zoom sangat perlahan (di-upscale 2x dulu agar
-       tidak geter), 2 variasi: zoom masuk / zoom keluar
-    3. HARD CUT - antar foto potongan langsung tanpa efek
-       (fade xfade menimbulkan ghosting/frame hantu, tidak cocok untuk reels)
-    4. DURASI BERVARIASI - tiap foto 3-6 detik acak
-    5. MUSIK LATAR ALAM - brown noise lembut di bawah narasi
-    6. HOOK TEXT - teks besar (font 36) di tengah layar selama 3 detik pertama
-       (Bahasa Indonesia, 2-4 kata, provokatif)
-    7. SUBTITLE MODERN - gaya TikTok/Reels: font 26 bold kapital (LEBIH KECIL
-       dari hook utk hierarki visual), outline hitam tebal, posisi 58% dari
-       atas layar (tidak menutupi hewan), kata kunci berwarna kuning,
-       segmen pendek 2 baris yang ganti mengikuti narasi
-    """
-    # Tulis ASS hook: tampil 0.5 - 3.0 detik, font BESAR di tengah
-    # PlayRes 1080x1920 = ukuran font dalam pixel asli (tanpa bug scaling SRT)
-    hook_filter = ""
-    if hook_text and hook_text.strip():
-        hook_bersih = hook_text.strip().replace("\\", "").replace("{", "").replace("}", "")
-        hook_ass = ASS_HEADER + f"Dialogue: 0,0:00:00.50,0:00:03.00,Hook,{hook_bersih}\n"
-        with open(FILE_HOOK_ASS, "w", encoding="utf-8") as f_hook:
-            f_hook.write(hook_ass)
-        hook_filter = "ass=hook.ass"
-        print(f"Hook overlay aktif: {hook_bersih}")
-    else:
-        print("PERINGATAN: hook_text kosong, hook tidak ditampilkan!")
-    # Pengaman: butuh minimal 2 foto agar reels tidak terlalu pendek
-    if len(photo_files) < 2:
-        raise RuntimeError(
-            f"Butuh minimal 2 foto untuk render reels, hanya dapat {len(photo_files)}. "
-            "Kemungkinan download foto gagal (jaringan/API sumber foto bermasalah)."
-        )
-    # --- Gerakan kamera: hanya 2, sangat halus ---
-    # 'on' = nomor frame output (0 sampai d-1)
-    # Trik anti-geter: gambar di-upscale 2x DULU sebelum zoompan,
-    # sehingga langkah zoom-nya jauh lebih halus
-    GERAKAN_KAMERA = [
-        # Zoom masuk sangat perlahan (1.0 -> ~1.09)
-        "z='1+0.0006*on':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'",
-        # Zoom keluar sangat perlahan (~1.09 -> 1.0)
-        "z='max(1.09-0.0006*on\\,1.0)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'",
-    ]
-
-    FPS = 25
-
+def render_reel(photos, hook, duration):
+    per_photo = duration / len(photos)
     cmd = ["ffmpeg", "-y"]
-    filter_parts = []
-
-    # --- Langkah 1: tiap foto jadi klip dengan gerakan acak ---
-    # PENTING: input adalah 1 gambar statis (tanpa -loop, tanpa -t).
-    # zoompan d=N membuat tepat N frame dari 1 gambar tersebut.
-    # (Bug sebelumnya: pakai -loop 1 sehingga tiap frame input
-    #  di-zoom N kali -> video jadi 10 menit!)
-    for idx, photo in enumerate(photo_files):
-        dur = random.choice([3, 4, 5, 6])  # durasi acak 3-6 detik
-        gerakan = random.choice(GERAKAN_KAMERA)
-        frames = dur * FPS
-
-        cmd += ["-i", photo]
-
-        # Background: isi penuh frame + blur
-        # Foreground: tampil UTUH (decrease = fit, tidak dipotong)
-        # Lalu composite di-upscale 2x sebelum zoompan agar gerakan halus
-        filter_parts.append(
-            f"[{idx}:v]scale=1080:1920:force_original_aspect_ratio=increase,"
-            f"crop=1080:1920,boxblur=15:3[bg{idx}];"
-            f"[{idx}:v]scale=1080:1920:force_original_aspect_ratio=decrease[fg{idx}];"
-            f"[bg{idx}][fg{idx}]overlay=(W-w)/2:(H-h)/2,"
-            f"scale=2160:3840,"
-            f"zoompan={gerakan}:d={frames}:s=1080x1920:fps={FPS},"
-            f"settb=AVTB,setsar=1[v{idx}]"
+    filters = []
+    fps = 25
+    for i, photo in enumerate(photos):
+        cmd += ["-loop", "1", "-t", f"{per_photo:.3f}", "-i", photo]
+        frames = max(1, round(per_photo * fps))
+        motion = "1+0.00045*on" if i % 2 == 0 else "max(1.08-0.00045*on\\,1.0)"
+        filters.append(
+            f"[{i}:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
+            f"boxblur=15:3[bg{i}];"
+            f"[{i}:v]scale=1080:1920:force_original_aspect_ratio=decrease[fg{i}];"
+            f"[bg{i}][fg{i}]overlay=(W-w)/2:(H-h)/2,scale=2160:3840,"
+            f"zoompan=z='{motion}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames}:s=1080x1920:fps={fps},"
+            f"setsar=1[v{i}]"
         )
-        print(f"  Foto {idx+1}: durasi {dur} detik, gerakan acak")
+    labels = "".join(f"[v{i}]" for i in range(len(photos)))
+    filters.append(f"{labels}concat=n={len(photos)}:v=1:a=0,setpts=PTS-STARTPTS[vbase]")
+    hook_clean = re.sub(r"[^A-Za-z0-9' !?-]", "", hook).upper()
+    with open(FILE_HOOK_ASS, "w", encoding="utf-8") as f:
+        f.write("""[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, Bold, Outline, Alignment, MarginV
+Style: Hook,DejaVu Sans,78,&H00FFFFFF,&H00000000,1,5,5,0
+[Events]
+Format: Layer, Start, End, Style, Text
+""")
+        f.write(f"Dialogue: 0,0:00:00.50,0:00:03.00,Hook,{hook_clean}\n")
 
-    # --- Langkah 2: gabung semua klip dengan HARD CUT (concat) ---
-    # xfade fade sebelumnya menimbulkan ghosting (frame hantu/ganda) saat
-    # transisi karena dua klip zoom yang berbeda di-overlay. Hard cut via
-    # concat lebih bersih dan ritmenya lebih cocok untuk reels.
-    label_input = "".join(f"[v{i}]" for i in range(len(photo_files)))
-    filter_parts.append(
-        f"{label_input}concat=n={len(photo_files)}:v=1:a=0[vconcat]"
-    )
-    label_akhir = "[vconcat]"
-
-    # --- Langkah 3: hook overlay + subtitle + musik latar + render final ---\n
-    # SUBTITLE MODERN (gaya TikTok/Reels viral):
-    # - Alignment=8 (top-center) + MarginV=1080 -> teks di 58% dari atas layar
-    #   (video 1920px tinggi; 58% = ~1114px; teks 2 baris ~70px -> MarginV 1080
-    #   menaruh TENGAH blok teks tepat di 58%. TIDAK menutupi hewan di tengah.)
-    # - FontSize=26: LEBIH KECIL dari hook (36) -> hierarki visual jelas
-    #   (hook = penarik perhatian, subtitle = pendukung)
-    # - Outline=4: outline hitam TEBAL agar terbaca di atas video apapun
-    # - Kata kunci kuning via tag ASS {\\c&H00D7FF&} di file SRT
-    # ASS dengan PlayRes 1080x1920: FontSize 40px asli, posisi bawah (Alignment=2)
-    # Ukuran dan posisi seperti SEBELUM revisi bahasa Indonesia (yang Indra suka)
-    sub_filter = "ass=narasi.ass"
-
-    # Musik latar: brown noise (suara dengung rendah seperti angin)
-    # difilter lowpass agar halus, volume 0.10 (terdengar lembut tapi
-    # tidak mengganggu narasi). Dibuat langsung oleh ffmpeg -
-    # tidak butuh file eksternal, bebas masalah hak cipta.
-    ambient_filter = (
-        "anoisesrc=color=brown:duration=40:sample_rate=44100[noise];"
-        "[noise]lowpass=f=400,volume=0.10[amb]"
-    )
-
-    # Rantai video: klip -> hook overlay (jika ada) -> subtitle narasi
-    rantai_video = f"{label_akhir}"
-    if hook_filter:
-        rantai_video += f"{hook_filter}[vhook];[vhook]"
-    rantai_video += f"{sub_filter}[vout]"
-    # SINKRONISASI AUDIO-SUBTITLE:
-    # Subtitle di-offset +3.0 detik (mulai setelah hook text selesai).
-    # Agar TETAP SINKRON, narasi audio juga di-delay 3 detik via adelay.
-    # Tanpa ini, subtitle muncul 3 detik SETELAH kata diucapkan (tidak sinkron!).
-    idx_audio = len(photo_files)
-    full_filter = (
-        ";".join(filter_parts) + ";" + rantai_video + ";"
-        + ambient_filter + f";[{idx_audio}:a]adelay=3000|3000[aud_del];"
-        + "[aud_del][amb]amix=inputs=2:duration=first[aout]"
-    )
+    idx_audio = len(photos)
     cmd += ["-i", FILE_AUDIO]
-    cmd += [
-        "-filter_complex", full_filter,
-        "-map", "[vout]",
-        "-map", "[aout]",  # audio campuran: narasi + musik latar
-        "-c:v", "libx264",
-        "-pix_fmt", "yuv420p",
-        "-c:a", "aac",
-        "-b:a", "192k",
-        "-shortest",
-        FILE_FINAL
-    ]
-
-    print("Merender video final (hard cut, tanpa transisi)...")
+    filters.append(f"[vbase]ass=hook_en.ass,ass=narasi_en.ass[vout]")
+    filters.append(f"anoisesrc=color=brown:duration=40:sample_rate=44100[noise];[noise]lowpass=f=400,volume=0.06[amb]")
+    filters.append(f"[{idx_audio}:a]adelay=3000|3000[narr];[narr][amb]amix=inputs=2:duration=first[aout]")
+    cmd += ["-filter_complex", ";".join(filters),
+            "-map", "[vout]", "-map", "[aout]",
+            "-t", f"{duration:.3f}", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", FILE_FINAL]
     subprocess.run(cmd, check=True, cwd=BASE_DIR)
-    print("Render final Reels sukses:", FILE_FINAL)
+    final_duration = probe_duration(FILE_FINAL)
+    if not (VIDEO_MIN_SECONDS <= final_duration <= VIDEO_MAX_SECONDS):
+        raise RuntimeError(f"Video QA gagal: durasi {final_duration:.1f}s.")
+    return final_duration
 
-# ==========================================
-# 7. Distribusi Telegram Bot
-# ==========================================
-def send_to_telegram(video_path, caption_text):
+def send_telegram(video_path, caption):
     if not (TELEGRAM_TOKEN and TELEGRAM_CHAT_ID):
-        return
+        return False
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendVideo"
         with open(video_path, "rb") as f:
-            requests.post(
-                url,
-                data={"chat_id": TELEGRAM_CHAT_ID, "caption": caption_text[:1000]},
-                files={"video": f},
-                timeout=90
-            )
-        print("-> Video berhasil terkirim ke Telegram!")
-    except Exception as e:
-        print(f"Gagal mengirim ke Telegram: {e}")
+            r = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendVideo",
+                              data={"chat_id": TELEGRAM_CHAT_ID, "caption": caption[:1000]},
+                              files={"video": f}, timeout=120)
+        r.raise_for_status()
+        return True
+    except Exception as exc:
+        print(f"Telegram gagal: {exc}")
+        return False
 
-# ==========================================
-# 8. Deteksi ID Instagram Bisnis
-# ==========================================
 def get_instagram_id():
-    try:
-        url = f"https://graph.facebook.com/v21.0/{FB_PAGE_ID}?fields=instagram_business_account&access_token={FB_TOKEN}"
-        res = requests.get(url, timeout=10).json()
-        ig_id = res.get("instagram_business_account", {}).get("id")
-        return ig_id
-    except Exception as e:
-        print(f"Kendala mencari Instagram ID: {e}")
+    if not FB_TOKEN or not FB_PAGE_ID:
         return None
+    data = http_json("GET", f"{FB_API}/{FB_PAGE_ID}",
+                     params={"fields": "instagram_business_account", "access_token": FB_TOKEN})
+    return (data.get("instagram_business_account") or {}).get("id")
 
-# ==========================================
-# 9. Publikasi Instagram Reels
-# ==========================================
-def post_instagram_reels(video_path, caption_text, ig_id):
-    """
-    Posting reels ke Instagram. Mengembalikan True jika sukses, False jika gagal.
-    History hanya dicatat jika posting berhasil (lihat main()).
-    """
+def post_instagram(video_path, caption, ig_id):
     if not ig_id:
-        print("ID Instagram tidak ditemukan. Melewati posting Instagram.")
-        return True  # bukan kegagalan, hanya dilewati
-
-    try:
-        print(f"Menginisialisasi Instagram Reels (IG ID: {ig_id})...")
-        init_url = f"https://graph.facebook.com/v21.0/{ig_id}/media"
-        init_params = {
-            "media_type": "REELS",
-            "upload_type": "resumable",
-            "caption": caption_text,
-            "share_to_feed": "true",
-            "access_token": FB_TOKEN
-        }
-        r_init = requests.post(init_url, data=init_params, timeout=20).json()
-        video_id = r_init.get("id")
-        upload_uri = r_init.get("uri")
-
-        if not upload_uri:
-            print(f"Gagal inisialisasi IG Reels: {r_init}")
-            return False
-
-        with open(video_path, "rb") as f:
-            video_data = f.read()
-
-        headers = {
-            "Authorization": f"OAuth {FB_TOKEN}",
-            "offset": "0",
-            "file_size": str(len(video_data))
-        }
-        requests.post(upload_uri, headers=headers, data=video_data, timeout=120)
-
-        print("Menunggu proses render di server Meta...")
-        status_url = f"https://graph.facebook.com/v21.0/{video_id}?fields=status_code&access_token={FB_TOKEN}"
-        for _ in range(12):
-            time.sleep(10)
-            status_res = requests.get(status_url, timeout=10).json()
-            if status_res.get("status_code") == "FINISHED":
-                break
-
-        pub_url = f"https://graph.facebook.com/v21.0/{ig_id}/media_publish"
-        pub_res = requests.post(pub_url, data={"creation_id": video_id, "access_token": FB_TOKEN}, timeout=20).json()
-        if pub_res.get("id"):
-            print("-> SUKSES! Instagram Reels terbit. ID:", pub_res.get("id"))
-            return True
-        print(f"Gagal publish IG Reels: {pub_res}")
         return False
-    except Exception as e:
-        print(f"Kendala posting Instagram Reels: {e}")
-        return False
-
-# ==========================================
-# 10. Publikasi Facebook Reels
-# ==========================================
-def post_facebook_reels(video_path, caption_text):
-    """
-    Posting reels ke Facebook. Mengembalikan True jika sukses, False jika gagal.
-    History hanya dicatat jika posting berhasil (lihat main()).
-    """
-    if not (FB_TOKEN and FB_PAGE_ID):
-        print("Kredensial Facebook belum lengkap, lewati posting FB.")
-        return True  # bukan kegagalan, hanya dilewati
-
-    try:
-        print("Menginisialisasi Facebook Reels...")
-        init_url = f"https://graph.facebook.com/v21.0/{FB_PAGE_ID}/video_reels"
-        r_init = requests.post(init_url, data={"upload_phase": "start", "access_token": FB_TOKEN}, timeout=20).json()
-        video_id = r_init.get("video_id")
-        upload_url = r_init.get("upload_url")
-
-        if not upload_url:
-            print(f"Gagal inisialisasi FB Reels: {r_init}")
-            return False
-
-        with open(video_path, "rb") as f:
-            video_data = f.read()
-
-        headers = {
-            "Authorization": f"OAuth {FB_TOKEN}",
-            "offset": "0",
-            "file_size": str(len(video_data))
-        }
-        requests.post(upload_url, headers=headers, data=video_data, timeout=120)
-
-        print("Menerbitkan Facebook Reels ke Halaman...")
-        publish_url = f"https://graph.facebook.com/v21.0/{FB_PAGE_ID}/video_reels"
-        pub_params = {
-            "upload_phase": "finish",
-            "access_token": FB_TOKEN,
-            "video_id": video_id,
-            "video_state": "PUBLISHED",
-            "description": caption_text
-        }
-        r_pub = requests.post(publish_url, data=pub_params, timeout=20).json()
-        if r_pub.get("success"):
-            print("-> SUKSES! Facebook Reels terbit di Halaman FB!")
-            return True
-        print(f"Respon penerbitan FB Reels: {r_pub}")
-        return False
-    except Exception as e:
-        print(f"Kendala posting Facebook Reels: {e}")
-        return False
-
-# ==========================================
-# Alur Utama
-# ==========================================
-def main():
-    # DRY RUN: jika env DRY_RUN=true, video dibuat tapi TIDAK diposting.
-    # Dipakai saat test manual via workflow_dispatch agar bisa review dulu.
-    DRY_RUN = os.environ.get("DRY_RUN", "").lower() == "true"
-    if DRY_RUN:
-        print("MODE DRY RUN: video akan dibuat tapi TIDAK diposting ke FB/IG/Telegram.")
-    else:
-        # Jeda acak 1-8 menit agar pola posting terlihat natural (tidak seperti bot)
-        jeda_detik = random.randint(60, 480)
-        print(f"Menunggu jeda alami selama {jeda_detik} detik sebelum memproses...")
-        time.sleep(jeda_detik)
-
-    target = get_species_target()
-    print(f"Target Spesies Reels: {target}")
-
-    # Cari nama Indonesia dari daftar bintang (untuk hook & narasi)
-    nama_id = ""
-    for s in load_spesies_bintang():
-        if s["latin"].lower() == target.lower():
-            nama_id = s["indonesia"]
+    init = http_json("POST", f"{FB_API}/{ig_id}/media",
+                     data={"media_type": "REELS", "upload_type": "resumable",
+                           "caption": caption, "share_to_feed": "true", "access_token": FB_TOKEN})
+    creation_id, upload_uri = init.get("id"), init.get("uri")
+    if not creation_id or not upload_uri:
+        raise RuntimeError("Instagram resumable init tidak mengembalikan ID/URI.")
+    with open(video_path, "rb") as f:
+        video = f.read()
+    upload = requests.post(upload_uri, headers={"Authorization": f"OAuth {FB_TOKEN}",
+                                                "offset": "0", "file_size": str(len(video))},
+                           data=video, timeout=180)
+    upload.raise_for_status()
+    status = "UNKNOWN"
+    for _ in range(24):
+        time.sleep(5)
+        data = http_json("GET", f"{FB_API}/{creation_id}",
+                         params={"fields": "status_code,status", "access_token": FB_TOKEN}, timeout=15)
+        status = data.get("status_code") or data.get("status")
+        if status in {"FINISHED", "PUBLISHED"}:
             break
+        if status in {"ERROR", "EXPIRED"}:
+            raise RuntimeError(f"Instagram processing gagal: {data}")
+    if status not in {"FINISHED", "PUBLISHED"}:
+        raise RuntimeError(f"Instagram processing timeout: {status}")
+    pub = http_json("POST", f"{FB_API}/{ig_id}/media_publish",
+                    data={"creation_id": creation_id, "access_token": FB_TOKEN})
+    if not pub.get("id"):
+        raise RuntimeError(f"Instagram publish gagal: {pub}")
+    return True
 
-    photos = download_6_photos(target)
-    hook = generate_hook_text(target, nama_id)
-    naskah = generate_naskah_indonesia(target, nama_id)
-    asyncio.run(create_audio_and_clean_subtitles(naskah))
-    render_multi_photo_reels(photos, hook)
+def post_facebook(video_path, caption):
+    if not (FB_TOKEN and FB_PAGE_ID):
+        return False
+    init = http_json("POST", f"{FB_API}/{FB_PAGE_ID}/video_reels",
+                     data={"upload_phase": "start", "access_token": FB_TOKEN})
+    video_id, upload_url = init.get("video_id"), init.get("upload_url")
+    if not video_id or not upload_url:
+        raise RuntimeError(f"Facebook Reel init gagal: {init}")
+    with open(video_path, "rb") as f:
+        video = f.read()
+    upload = requests.post(upload_url, headers={"Authorization": f"OAuth {FB_TOKEN}",
+                                                "offset": "0", "file_size": str(len(video))},
+                           data=video, timeout=180)
+    upload.raise_for_status()
+    pub = http_json("POST", f"{FB_API}/{FB_PAGE_ID}/video_reels",
+                    data={"upload_phase": "finish", "access_token": FB_TOKEN,
+                          "video_id": video_id, "video_state": "PUBLISHED",
+                          "description": caption})
+    if not pub.get("success"):
+        raise RuntimeError(f"Facebook Reel publish gagal: {pub}")
+    return True
 
-    # Caption: bersihkan format segmen (hapus *bintang*, gabung jadi paragraf rapi)
-    naskah_caption = re.sub(r'\*([^*]+)\*', r'\1', naskah).replace('\n', ' ')
-    naskah_caption = re.sub(r'\s+', ' ', naskah_caption).strip()
+def main():
+    if POST_MODE not in {"disabled", "dry_run", "production"}:
+        raise RuntimeError("POST_MODE harus disabled, dry_run, atau production.")
+    if POST_MODE == "disabled":
+        print("REELS DISABLED: pipeline tidak membuat/post video. Mode aman.")
+        return
+
+    if POST_MODE == "production":
+        time.sleep(random.randint(60, 480))
+
+    item = choose_target()
+    print(f"Target: {item['latin']} / {item['indonesia']}")
+    photos = download_species_photos(item["latin"])
+    hook = generate_english_hook(item)
+    script = generate_english_script(item)
+    segments = segment_script(script)
+    duration = asyncio.run(make_tts_and_subtitles(script, segments))
+    final_duration = render_reel(photos, hook, duration)
+
     caption = (
-        f"Satwa liar Jawa: {target}" + (f" ({nama_id})" if nama_id else "") + ".\n\n"
-        f"{naskah_caption}\n\n"
-        f"#satwajawa #florafauna #indonesia #jawa #wildlife #biodiversity #indobizarre"
+        f"{item['indonesia']} ({item['latin']}) — wildlife of Java, Indonesia.\\n\\n"
+        f"{script}\\n\\n#JavaWildlife #IndonesiaWildlife #FloraFaunaJawa #Wildlife #Biodiversity"
     )
+    print(f"VIDEO QA OK: {final_duration:.1f}s; voice={VOICE}; photos={len(photos)}")
 
-    if not POSTING_AKTIF:
-        print("POSTING DIMATIKAN (POSTING_AKTIF=False). Video dibuat tapi TIDAK diposting.")
-        print(f"Video tersimpan di: {FILE_FINAL}")
+    if POST_MODE == "dry_run":
+        send_telegram(FILE_FINAL, caption)
+        print("DRY RUN: no Facebook/Instagram publishing and no history update.")
         return
 
-    if DRY_RUN:
-        print(f"DRY RUN selesai. Video tersimpan di: {FILE_FINAL}")
-        print("Tidak ada posting ke Telegram/FB/IG. History TIDAK dicatat.")
-        print("Review videonya, kalau sudah cocok run lagi tanpa dry run untuk posting.")
-        return
-
-    send_to_telegram(FILE_FINAL, caption)
-    fb_ok = post_facebook_reels(FILE_FINAL, caption)
-
-    ig_ok = True
-    ig_id = get_instagram_id()
-    if ig_id:
-        ig_ok = post_instagram_reels(FILE_FINAL, caption, ig_id)
-
-    # Catat history HANYA jika semua posting berhasil.
-    # Kalau ada yang gagal, spesies tidak dicatat agar bisa dicoba lagi lain waktu.
-    if fb_ok and ig_ok:
-        save_to_history(target)
-        print("Spesies resmi dicatat ke history_reels.json!")
-    else:
-        print("Posting belum lengkap, history TIDAK dicatat - akan dicoba lagi lain waktu.")
+    # Production only reaches here after all content/media QA above.
+    status = {"facebook": "failed", "instagram": "failed", "telegram": "failed"}
+    try:
+        status["telegram"] = "success" if send_telegram(FILE_FINAL, caption) else "failed"
+        status["facebook"] = "success" if post_facebook(FILE_FINAL, caption) else "failed"
+        ig_id = get_instagram_id()
+        if not ig_id:
+            raise RuntimeError("Instagram Business Account ID tidak ditemukan.")
+        status["instagram"] = "success" if post_instagram(FILE_FINAL, caption, ig_id) else "failed"
+    finally:
+        save_history_record(item["latin"], status)
+    if status["facebook"] != "success" or status["instagram"] != "success":
+        raise RuntimeError(f"Publishing incomplete: {status}")
+    print("REELS PRODUCTION SUCCESS:", status)
 
 if __name__ == "__main__":
     main()
