@@ -27,7 +27,6 @@ FILE_BINTANG = os.path.join(BASE_DIR, "spesies_bintang.json")
 # disabled = build nothing beyond validation; dry_run = render/review only; production = publish.
 POST_MODE = os.environ.get("POST_MODE", "disabled").strip().lower()
 VOICE = "en-US-JennyNeural"
-MIN_PHOTOS = 4
 MAX_PHOTOS = 6
 MIN_UNIQUE_PHOTOS = 4
 PHASH_MAX_DISTANCE = 8
@@ -800,7 +799,7 @@ def post_facebook(video_path, caption):
         raise RuntimeError(f"Facebook Reel publish gagal: {pub}")
     return True
 
-def cleanup_runtime_artifacts(keep_final=False):
+def cleanup_runtime_artifacts():
     names = {"narasi_en.mp3", "narasi_en.ass", "hook_en.ass", "media_sources.json"}
     for name in names:
         path = os.path.join(BASE_DIR, name)
@@ -846,7 +845,7 @@ def main():
         final_duration = render_reel(media, hook, duration)
 
         caption = (
-            f"{item['indonesia']} ({item['latin']}) — Java wildlife.\\n\\n"
+            f"{item['indonesia']} ({item['latin']}) — Java biodiversity.\\n\\n"
             f"{item['fakta_singkat']}\\n\\n"
             f"Did you know this species?\\n\\n"
             f"#JavaWildlife #IndonesiaWildlife #FloraFaunaJawa #Biodiversity"
