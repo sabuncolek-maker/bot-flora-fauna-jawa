@@ -74,7 +74,6 @@ def get_species_from_gbif(posted_list):
 # ==========================================
 # 3. Penentuan Spesies Target (GBIF -> Cadangan JSON)
 # ==========================================
-SPECIES_FILE = "species_list.json"
 HISTORY_FILE = "posted.txt"
 
 # Baca riwayat postingan
@@ -88,17 +87,7 @@ selected_latin = get_species_from_gbif(posted_species)
 
 # Tahap 2: Fallback (cadangan otomatis jika GBIF bermasalah atau kosong)
 if not selected_latin:
-    with open(SPECIES_FILE, "r", encoding="utf-8") as f:
-        all_species = json.load(f)
-
-    remaining_species = [s for s in all_species if s not in posted_species]
-    if not remaining_species:
-        print("Semua spesies cadangan sudah pernah diunggah. Mengulang putaran daftar dari awal...")
-        posted_species = []
-        remaining_species = all_species[:]
-
-    selected_latin = random.choice(remaining_species)
-    print(f"[CADANGAN LOKAL] Mengambil dari species_list.json: {selected_latin}")
+    raise RuntimeError("GBIF tidak memberikan kandidat spesies Jawa yang tervalidasi; job dihentikan agar tidak menerbitkan data yang belum terverifikasi.")
 
 print(f"Target spesies hari ini: {selected_latin}")
 
@@ -110,9 +99,9 @@ def fetch_inaturalist_image(latin_name):
     try:
         url = f"https://api.inaturalist.org/v1/taxa?q={requests.utils.quote(latin_name)}&locale=id&license=cc0,cc-by"
         res_data = request_json("GET", url, timeout=15)
-            results = res_data.get("results", [])
-            if results:
-                default_photo = results[0].get("default_photo")
+        results = res_data.get("results", [])
+        if results:
+            default_photo = results[0].get("default_photo")
                 if default_photo and "medium_url" in default_photo:
                     img_url = default_photo["medium_url"].replace("medium", "large")
                     print("-> Foto berhasil diambil dari iNaturalist!")
@@ -123,8 +112,6 @@ def fetch_inaturalist_image(latin_name):
 
 def fetch_species_image(latin_name):
     headers = {"User-Agent": "FaunaBot/1.0 (contact@indobizarre.local)"}
-    cadangan = "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1080"
-    
     # 1. Coba Wikipedia
     try:
         url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{requests.utils.quote(latin_name)}"
