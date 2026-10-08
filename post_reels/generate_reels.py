@@ -830,72 +830,76 @@ def main():
         print("REELS DISABLED: pipeline tidak membuat/post video. Mode aman.")
         return
 
-    if POST_MODE == "production":
-        time.sleep(random.randint(60, 480))
-
-    item = choose_target()
-    content_format = choose_content_format(item)
-    print(f"Target: {item['latin']} / {item['indonesia']} | format={content_format}")
-
-    media = download_species_media(item["latin"], item["indonesia"])
-    hook = generate_english_hook(item, content_format)
-    script = generate_english_script(item, content_format)
-    segments = segment_script(script)
-    duration, script = asyncio.run(make_tts_and_subtitles(script, segments))
-    final_duration = render_reel(media, hook, duration)
-
-    caption = (
-        f"{item['indonesia']} ({item['latin']}) — Java wildlife.\\n\\n"
-        f"{item['fakta_singkat']}\\n\\n"
-        f"Did you know this species?\\n\\n"
-        f"#JavaWildlife #IndonesiaWildlife #FloraFaunaJawa #Biodiversity"
-    )
-    footage_count = sum(1 for x in media if x["kind"] == "video")
-    print(
-        f"VIDEO QA OK: {final_duration:.1f}s; voice={VOICE}; "
-        f"media={len(media)}; footage={footage_count}; format={content_format}"
-    )
-
-    if POST_MODE == "dry_run":
-        try:
-            if not (TELEGRAM_TOKEN and TELEGRAM_CHAT_ID):
-                raise RuntimeError("Dry-run membutuhkan TELEGRAM_BOT_TOKEN dan TELEGRAM_CHAT_ID.")
-            if not send_telegram(FILE_FINAL, caption):
-                raise RuntimeError("Telegram review gagal; dry-run dianggap gagal.")
-            print("DRY RUN OK: video rendered and delivered to Telegram; no publishing and no history update.")
-        finally:
-            cleanup_runtime_artifacts()
-        return
-
-    previous = get_last_platform_status(item["latin"])
-    status = {
-        "facebook": previous.get("facebook", "failed"),
-        "instagram": previous.get("instagram", "failed"),
-        "telegram": previous.get("telegram", "failed"),
-    }
-
     try:
-        if status["telegram"] != "success":
-            status["telegram"] = "success" if send_telegram(FILE_FINAL, caption) else "failed"
-        if status["facebook"] != "success":
-            status["facebook"] = "success" if post_facebook(FILE_FINAL, caption) else "failed"
-        if status["instagram"] != "success":
-            ig_id = get_instagram_id()
-            if not ig_id:
-                raise RuntimeError("Instagram Business Account ID tidak ditemukan.")
-            status["instagram"] = "success" if post_instagram(FILE_FINAL, caption, ig_id) else "failed"
-    finally:
-        save_history_record(item["latin"], {
-            **status,
-            "format": content_format,
-            "media_count": len(media),
-            "footage_count": footage_count,
-        })
-        cleanup_runtime_artifacts()
+        if POST_MODE == "production":
+            time.sleep(random.randint(60, 480))
 
-    if status["facebook"] != "success" or status["instagram"] != "success":
-        raise RuntimeError(f"Publishing incomplete: {status}")
-    print("REELS PRODUCTION SUCCESS:", status)
+        item = choose_target()
+        content_format = choose_content_format(item)
+        print(f"Target: {item['latin']} / {item['indonesia']} | format={content_format}")
+
+        media = download_species_media(item["latin"], item["indonesia"])
+        hook = generate_english_hook(item, content_format)
+        script = generate_english_script(item, content_format)
+        segments = segment_script(script)
+        duration, script = asyncio.run(make_tts_and_subtitles(script, segments))
+        final_duration = render_reel(media, hook, duration)
+
+        caption = (
+            f"{item['indonesia']} ({item['latin']}) — Java wildlife.\\n\\n"
+            f"{item['fakta_singkat']}\\n\\n"
+            f"Did you know this species?\\n\\n"
+            f"#JavaWildlife #IndonesiaWildlife #FloraFaunaJawa #Biodiversity"
+        )
+        footage_count = sum(1 for x in media if x["kind"] == "video")
+        print(
+            f"VIDEO QA OK: {final_duration:.1f}s; voice={VOICE}; "
+            f"media={len(media)}; footage={footage_count}; format={content_format}"
+        )
+
+        if POST_MODE == "dry_run":
+            try:
+                if not (TELEGRAM_TOKEN and TELEGRAM_CHAT_ID):
+                    raise RuntimeError("Dry-run membutuhkan TELEGRAM_BOT_TOKEN dan TELEGRAM_CHAT_ID.")
+                if not send_telegram(FILE_FINAL, caption):
+                    raise RuntimeError("Telegram review gagal; dry-run dianggap gagal.")
+                print("DRY RUN OK: video rendered and delivered to Telegram; no publishing and no history update.")
+            finally:
+                cleanup_runtime_artifacts()
+            return
+
+        previous = get_last_platform_status(item["latin"])
+        status = {
+            "facebook": previous.get("facebook", "failed"),
+            "instagram": previous.get("instagram", "failed"),
+            "telegram": previous.get("telegram", "failed"),
+        }
+
+        try:
+            if status["telegram"] != "success":
+                status["telegram"] = "success" if send_telegram(FILE_FINAL, caption) else "failed"
+            if status["facebook"] != "success":
+                status["facebook"] = "success" if post_facebook(FILE_FINAL, caption) else "failed"
+            if status["instagram"] != "success":
+                ig_id = get_instagram_id()
+                if not ig_id:
+                    raise RuntimeError("Instagram Business Account ID tidak ditemukan.")
+                status["instagram"] = "success" if post_instagram(FILE_FINAL, caption, ig_id) else "failed"
+        finally:
+            save_history_record(item["latin"], {
+                **status,
+                "format": content_format,
+                "media_count": len(media),
+                "footage_count": footage_count,
+            })
+            cleanup_runtime_artifacts()
+
+        if status["facebook"] != "success" or status["instagram"] != "success":
+            raise RuntimeError(f"Publishing incomplete: {status}")
+        print("REELS PRODUCTION SUCCESS:", status)
+
+    finally:
+        cleanup_runtime_artifacts()
 
 if __name__ == "__main__":
     main()
