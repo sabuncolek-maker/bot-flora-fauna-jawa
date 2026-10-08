@@ -153,38 +153,57 @@ def get_last_platform_status(species):
                 return platforms
     return {}
 
-def get_photo_candidates(latin):
-    """
-    Return many species-specific image candidates. The downloader performs
-    content-hash deduplication so repeated URLs or resized copies cannot
-    become fake "multiple photos".
-    """
-    urls = []
-    sources = []
+def _reusable_license(extmetadata):
+    raw = " ".join([
+        str((extmetadata.get("LicenseShortName") or {}).get("value", "")),
+        str((extmetadata.get("UsageTerms") or {}).get("value", "")),
+    ]).lower()
+    return any(x in raw for x in ["cc0", "cc by", "cc-by", "public domain"])
 
-    def add(url, meta):
-        if not url or url in urls:
-            return False
+
+def get_media_candidates(latin):
+    candidates = []
+    seen_urls = set()
+
+    def add(url, kind, source, meta=None):
+        if not url or url in seen_urls:
+            return
         lower = url.lower()
         if any(token in lower for token in [".svg", "map", "range", "distribution", "illustration", "plate"]):
-            return False
-        urls.append(url)
-        sources.append(meta)
-        return True
+            return
+        seen_urls.add(url)
+        candidates.append({"url": url, "kind": kind, "source": source, **(meta or {})})
+
+    try:
+        data = http_json(
+            "GET", "https://commons.wikimedia.org/w/api.php",
+            params={
+                "action": "query", "generator": "search", "gsrsearch": latin,
+                "gsrnamespace": 6, "gsrlimit": 100,
+                "prop": "imageinfo", "iiprop": "url|mime|extmetadata",
+                "format": "json", "formatversion": 2,
+            }, timeout=25,
+        )
+        for page in data.get("query", {}).get("pages", []):
+            info = (page.get("imageinfo") or [{}])[0]
+            mime = (info.get("mime") or "").lower()
+            ext = info.get("extmetadata") or {}
+            if mime.startswith("video/") and _reusable_license(ext):
+                add(info.get("url"), "video", "Wikimedia Commons", {
+                    "title": page.get("title"),
+                    "license": (ext.get("LicenseShortName") or {}).get("value", "unknown"),
+                })
+    except Exception as exc:
+        print(f"Wikimedia video search gagal: {exc}")
 
     try:
         for page in range(1, 5):
             data = http_json(
-                "GET",
-                "https://api.inaturalist.org/v1/observations",
+                "GET", "https://api.inaturalist.org/v1/observations",
                 params={
-                    "taxon_name": latin,
-                    "has[]": "photos",
-                    "quality_grade": "research",
-                    "per_page": 50,
-                    "page": page,
-                },
-                timeout=20,
+                    "taxon_name": latin, "has[]": "photos", "quality_grade": "research",
+                    "per_page": 50, "page": page,
+                }, timeout=20,
             )
             results = data.get("results", [])
             for obs in results:
@@ -193,9 +212,7 @@ def get_photo_candidates(latin):
                     if license_code and license_code not in {"cc0", "cc-by", "cc-by-sa"}:
                         continue
                     url = (photo.get("url") or "").replace("/square.", "/large.")
-                    add(url, {
-                        "source": "iNaturalist",
-                        "url": url,
+                    add(url, "photo", "iNaturalist", {
                         "license": license_code or "license-not-returned",
                         "observation_id": obs.get("id"),
                     })
@@ -206,36 +223,26 @@ def get_photo_candidates(latin):
 
     try:
         data = http_json(
-            "GET",
-            "https://commons.wikimedia.org/w/api.php",
+            "GET", "https://commons.wikimedia.org/w/api.php",
             params={
-                "action": "query",
-                "generator": "search",
-                "gsrsearch": latin,
-                "gsrnamespace": 6,
-                "gsrlimit": 50,
-                "prop": "imageinfo",
-                "iiprop": "url|mime",
-                "iiurlwidth": 1600,
-                "format": "json",
-                "formatversion": 2,
-            },
-            timeout=20,
+                "action": "query", "generator": "search", "gsrsearch": latin,
+                "gsrnamespace": 6, "gsrlimit": 100,
+                "prop": "imageinfo", "iiprop": "url|mime|extmetadata",
+                "iiurlwidth": 1600, "format": "json", "formatversion": 2,
+            }, timeout=25,
         )
         for page in data.get("query", {}).get("pages", []):
             info = (page.get("imageinfo") or [{}])[0]
             mime = (info.get("mime") or "").lower()
-            url = info.get("thumburl") or info.get("url")
-            if not mime.startswith("image/") or mime == "image/svg+xml":
+            ext = info.get("extmetadata") or {}
+            if not mime.startswith("image/") or mime == "image/svg+xml" or not _reusable_license(ext):
                 continue
-            add(url, {
-                "source": "Wikimedia Commons",
-                "url": url,
-                "license": "Commons file; verify file license metadata",
+            add(info.get("thumburl") or info.get("url"), "photo", "Wikimedia Commons", {
                 "title": page.get("title"),
+                "license": (ext.get("LicenseShortName") or {}).get("value", "unknown"),
             })
     except Exception as exc:
-        print(f"Wikimedia Commons gagal: {exc}")
+        print(f"Wikimedia photo search gagal: {exc}")
 
     try:
         data = http_json(
@@ -243,36 +250,58 @@ def get_photo_candidates(latin):
             f"https://en.wikipedia.org/api/rest_v1/page/summary/{requests.utils.quote(latin)}",
             timeout=15,
         )
-        img = (data.get("originalimage") or {}).get("source")
-        add(img, {
-            "source": "Wikimedia/Wikipedia",
-            "url": img,
-            "license": "verify Commons license",
-        })
+        add((data.get("originalimage") or {}).get("source"), "photo", "Wikimedia/Wikipedia",
+            {"license": "verify Commons license"})
     except Exception as exc:
         print(f"Wikipedia gagal: {exc}")
 
-    return list(zip(urls, sources))
+    return candidates
 
-def download_species_photos(latin):
-    candidates = get_photo_candidates(latin)
+
+def download_species_media(latin):
+    candidates = get_media_candidates(latin)
     saved = []
+    hashes = set()
     metadata = []
-    content_hashes = set()
 
-    for idx, (url, meta) in enumerate(candidates, 1):
+    for candidate in candidates:
+        if candidate["kind"] != "video" or sum(x["kind"] == "video" for x in saved) >= 2:
+            continue
         try:
-            data = http_bytes(url)
+            data = http_bytes(candidate["url"])
             digest = hashlib.sha256(data).hexdigest()
-            if digest in content_hashes:
-                print(f"Foto duplikat ditolak: {meta.get('source')} {url}")
+            if digest in hashes:
                 continue
-            content_hashes.add(digest)
-
-            path = os.path.join(BASE_DIR, f"foto_{len(saved) + 1}.jpg")
+            path = os.path.join(BASE_DIR, f"media_{len(saved) + 1}.mp4")
             with open(path, "wb") as f:
                 f.write(data)
+            probe = subprocess.run(
+                ["ffprobe", "-v", "error", "-select_streams", "v:0",
+                 "-show_entries", "stream=codec_type,duration,width,height",
+                 "-of", "json", path],
+                capture_output=True, text=True, timeout=15
+            )
+            if probe.returncode != 0 or not probe.stdout.strip():
+                os.remove(path)
+                continue
+            hashes.add(digest)
+            saved.append({"path": path, "kind": "video"})
+            metadata.append({**candidate, "path": path})
+            print(f"Footage unik diterima: {len(saved)} | {candidate['source']} | {candidate.get('title', '')}")
+        except Exception as exc:
+            print(f"Footage ditolak: {candidate['url']} ({exc})")
 
+    for candidate in candidates:
+        if candidate["kind"] != "photo" or len(saved) >= MAX_PHOTOS:
+            continue
+        try:
+            data = http_bytes(candidate["url"])
+            digest = hashlib.sha256(data).hexdigest()
+            if digest in hashes:
+                continue
+            path = os.path.join(BASE_DIR, f"media_{len(saved) + 1}.jpg")
+            with open(path, "wb") as f:
+                f.write(data)
             probe = subprocess.run(
                 ["ffprobe", "-v", "error", "-select_streams", "v:0",
                  "-show_entries", "stream=width,height", "-of", "csv=p=0", path],
@@ -281,77 +310,110 @@ def download_species_photos(latin):
             if probe.returncode != 0 or not probe.stdout.strip():
                 os.remove(path)
                 continue
-
-            saved.append(path)
-            metadata.append(meta)
-            print(f"Foto unik diterima: {len(saved)} | {meta.get('source')} | {meta.get('title', '')}")
-
-            if len(saved) >= MAX_PHOTOS:
-                break
+            hashes.add(digest)
+            saved.append({"path": path, "kind": "photo"})
+            metadata.append({**candidate, "path": path})
+            print(f"Foto unik diterima: {len(saved)} | {candidate['source']}")
         except Exception as exc:
-            print(f"Foto ditolak: {url} ({exc})")
+            print(f"Foto ditolak: {candidate['url']} ({exc})")
 
     if len(saved) < MIN_UNIQUE_PHOTOS:
         raise RuntimeError(
-            f"Hanya {len(saved)} foto UNIK spesifik valid ditemukan untuk {latin}; "
-            f"minimum {MIN_UNIQUE_PHOTOS}. Tidak akan mengulang foto yang sama."
+            f"Hanya {len(saved)} media UNIK spesifik valid ditemukan untuk {latin}; "
+            f"minimum {MIN_UNIQUE_PHOTOS}. Tidak akan mengulang media yang sama."
         )
 
-    with open(os.path.join(BASE_DIR, "photo_sources.json"), "w", encoding="utf-8") as f:
+    random.shuffle(saved)
+    with open(os.path.join(BASE_DIR, "media_sources.json"), "w", encoding="utf-8") as f:
         json.dump(metadata, f, ensure_ascii=False, indent=2)
     return saved
 
-def generate_english_script(item):
+
+def choose_content_format(item):
+    fact = item["fakta_singkat"].lower()
+    formats = ["guess", "one_fact", "detective", "myth_fact", "java_file"]
+    if any(x in fact for x in ["infant", "born", "young", "baby"]):
+        formats.append("baby_adult")
+    if "threatened" in fact or "endangered" in fact:
+        formats.append("threatened")
+    return random.choice(formats)
+
+
+def generate_english_script(item, content_format):
     fact = re.sub(r"\s+", " ", str(item.get("fakta_singkat", "")).strip()).strip()
     species = item["latin"]
     common_name = item["indonesia"]
 
     def fallback():
-        text = (
-            f"Meet {species}, known in Indonesia as {common_name}. "
-            f"{fact} "
-            f"This species is part of Java's remarkable biodiversity. "
-            f"Its distinctive story makes it worth knowing and protecting."
-        )
-        return re.sub(r"\s+", " ", text).strip()
+        templates = {
+            "guess": f"Can you identify this animal? It is {common_name}, known scientifically as {species}. {fact}",
+            "one_fact": f"Here is one fact worth remembering about {common_name}. {fact}",
+            "detective": f"Wildlife case file: identify the species from the evidence. The answer is {common_name}, {species}. {fact}",
+            "myth_fact": f"Myth or fact? {fact} This statement is presented as a fact.",
+            "baby_adult": f"Look closely at the young and adult stages of {common_name}. {fact}",
+            "threatened": f"This is {common_name}, {species}. {fact} Protecting its habitat matters.",
+            "java_file": f"Java wildlife file: {common_name}, {species}. {fact}",
+        }
+        return re.sub(r"\s+", " ", templates.get(content_format, templates["java_file"])).strip()
 
     try:
         client = Groq(api_key=GROQ_KEY)
-        base_prompt = f"""Write a concise wildlife documentary narration in natural English about {species} ({common_name}) from Java, Indonesia.
+        instructions = {
+            "guess": "Build a curiosity-first identification puzzle. Do not reveal the answer until near the end.",
+            "one_fact": "Open immediately with the single most surprising fact. No generic introduction.",
+            "detective": "Write it like a mini wildlife investigation with two or three clues, then reveal the species.",
+            "myth_fact": "Start with 'Myth or fact?' Present the supplied fact and clearly reveal the verdict.",
+            "baby_adult": "Focus on the visual difference between young and adult stages, using only the supplied fact.",
+            "threatened": "Use a serious documentary tone and emphasize the supplied threatened-status fact without exaggerating.",
+            "java_file": "Make it feel like a fast 20-second wildlife case file about Java.",
+        }
+        prompt = f"""Write a high-retention English narration for a short vertical wildlife Reel about {species} ({common_name}) from Java, Indonesia.
 
-ONLY use these editorial facts as factual claims:
+FORMAT: {content_format}
+{instructions.get(content_format, instructions["java_file"])}
+
+ONLY use this editorial fact as factual information:
 - {fact}
-Do not invent population numbers, locations, measurements, behavior, conservation status, superlatives, or habitat details.
-Do not turn uncertain claims into absolute claims.
-Write 45-65 words. Prefer about 50-58 words.
-Tone: calm, cinematic, intelligent, documentary-style.
-Return only the narration, no title, bullets, markdown, URLs, or citations."""
+
+Do not invent population numbers, exact locations, measurements, behavior, causes, conservation status, or comparisons.
+Do not use unsupported superlatives.
+Write 38-58 words. Keep sentences short and easy to subtitle.
+Start with a strong curiosity hook. End with the species name or a memorable final line when appropriate.
+Tone: cinematic, curious, intelligent, documentary-style.
+Return only narration. No title, bullets, markdown, URLs, hashtags, or citations."""
         for attempt in range(3):
-            prompt = base_prompt
-            if attempt:
-                prompt += "\nIMPORTANT: Make it shorter. Return 45-60 words and do not exceed 65 words."
             response = client.chat.completions.create(
                 model="openai/gpt-oss-120b",
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.15,
-                max_tokens=140,
+                temperature=0.2,
+                max_tokens=120,
             )
             raw = response.choices[0].message.content if response.choices else ""
             text = re.sub(r"\s+", " ", (raw or "").strip()).strip()
-            if 40 <= len(text.split()) <= 75:
+            if 36 <= len(text.split()) <= 65:
                 return text
     except Exception as exc:
         print(f"Groq narration unavailable, using deterministic fallback: {exc}")
 
     text = fallback()
-    if 40 <= len(text.split()) <= 75:
+    if 30 <= len(text.split()) <= 70:
         print(f"Using deterministic English narration fallback ({len(text.split())} words).")
         return text
     raise RuntimeError("English narration fallback failed QA.")
 
-def generate_english_hook(item):
-    hook = str(item.get("fakta_hook", "")).strip()
-    return hook or "WILDLIFE OF JAVA"
+
+def generate_english_hook(item, content_format):
+    hooks = {
+        "guess": "CAN YOU IDENTIFY THIS ANIMAL?",
+        "one_fact": item.get("fakta_hook", "ONE WILD FACT"),
+        "detective": "WILDLIFE DETECTIVE",
+        "myth_fact": "MYTH OR FACT?",
+        "baby_adult": "BABY VS ADULT",
+        "threatened": "THREATENED WILDLIFE",
+        "java_file": "JAVA WILDLIFE FILE",
+    }
+    return hooks.get(content_format, "JAVA WILDLIFE")
+
 
 def segment_script(text):
     sentences = [x.strip() for x in re.split(r"(?<=[.!?])\s+", text) if x.strip()]
@@ -489,25 +551,40 @@ def probe_duration(path):
         raise RuntimeError("ffprobe gagal.")
     return float(r.stdout.strip())
 
-def render_reel(photos, hook, duration):
-    per_photo = duration / len(photos)
+def render_reel(media, hook, duration):
+    per_media = duration / len(media)
     cmd = ["ffmpeg", "-y"]
     filters = []
     fps = 25
-    for i, photo in enumerate(photos):
-        cmd += ["-loop", "1", "-t", f"{per_photo:.3f}", "-i", photo]
-        frames = max(1, round(per_photo * fps))
-        motion = "1+0.00045*on" if i % 2 == 0 else "max(1.08-0.00045*on\\,1.0)"
-        filters.append(
-            f"[{i}:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
-            f"boxblur=15:3[bg{i}];"
-            f"[{i}:v]scale=1080:1920:force_original_aspect_ratio=decrease[fg{i}];"
-            f"[bg{i}][fg{i}]overlay=(W-w)/2:(H-h)/2,scale=2160:3840,"
-            f"zoompan=z='{motion}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames}:s=1080x1920:fps={fps},"
-            f"setsar=1[v{i}]"
-        )
-    labels = "".join(f"[v{i}]" for i in range(len(photos)))
-    filters.append(f"{labels}concat=n={len(photos)}:v=1:a=0,setpts=PTS-STARTPTS[vbase]")
+
+    for i, item in enumerate(media):
+        path = item["path"]
+        kind = item["kind"]
+        cmd += ["-stream_loop", "-1"] if kind == "video" else ["-loop", "1"]
+        cmd += ["-t", f"{per_media:.3f}", "-i", path]
+        frames = max(1, round(per_media * fps))
+        motion = "1+0.00045*on" if i % 2 == 0 else "max(1.08-0.00045*on\\\\,1.0)"
+
+        if kind == "video":
+            filters.append(
+                f"[{i}:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
+                f"boxblur=15:3[bg{i}];"
+                f"[{i}:v]scale=1080:1920:force_original_aspect_ratio=decrease[fg{i}];"
+                f"[bg{i}][fg{i}]overlay=(W-w)/2:(H-h)/2,setsar=1[v{i}]"
+            )
+        else:
+            filters.append(
+                f"[{i}:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
+                f"boxblur=15:3[bg{i}];"
+                f"[{i}:v]scale=1080:1920:force_original_aspect_ratio=decrease[fg{i}];"
+                f"[bg{i}][fg{i}]overlay=(W-w)/2:(H-h)/2,scale=2160:3840,"
+                f"zoompan=z='{motion}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+                f"d={frames}:s=1080x1920:fps={fps},setsar=1[v{i}]"
+            )
+
+    labels = "".join(f"[v{i}]" for i in range(len(media)))
+    filters.append(f"{labels}concat=n={len(media)}:v=1:a=0,setpts=PTS-STARTPTS[vbase]")
+
     hook_clean = re.sub(r"[^A-Za-z0-9' !?-]", "", hook).upper()
     with open(FILE_HOOK_ASS, "w", encoding="utf-8") as f:
         f.write("""[Script Info]
@@ -520,22 +597,26 @@ Style: Hook,DejaVu Sans,78,&H00FFFFFF,&H00000000,1,5,5,0
 [Events]
 Format: Layer, Start, End, Style, Text
 """)
-        f.write(f"Dialogue: 0,0:00:00.50,0:00:03.00,Hook,{hook_clean}\n")
+        f.write(f"Dialogue: 0,0:00:00.50,0:00:03.00,Hook,{hook_clean}\\n")
 
-    idx_audio = len(photos)
+    idx_audio = len(media)
     cmd += ["-i", FILE_AUDIO]
     filters.append("[vbase]ass=hook_en.ass,ass=narasi_en.ass[vout]")
     filters.append("anoisesrc=color=brown:duration=40:sample_rate=44100[noise];[noise]lowpass=f=400,volume=0.06[amb]")
     filters.append(f"[{idx_audio}:a]adelay=3000|3000[narr];[narr][amb]amix=inputs=2:duration=first[aout]")
-    cmd += ["-filter_complex", ";".join(filters),
-            "-map", "[vout]", "-map", "[aout]",
-            "-t", f"{duration:.3f}", "-c:v", "libx264", "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", FILE_FINAL]
+    cmd += [
+        "-filter_complex", ";".join(filters),
+        "-map", "[vout]", "-map", "[aout]",
+        "-t", f"{duration:.3f}", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", FILE_FINAL
+    ]
     subprocess.run(cmd, check=True, cwd=BASE_DIR)
+
     final_duration = probe_duration(FILE_FINAL)
     if not (VIDEO_MIN_SECONDS <= final_duration <= VIDEO_MAX_SECONDS):
         raise RuntimeError(f"Video QA gagal: durasi {final_duration:.1f}s.")
     return final_duration
+
 
 def send_telegram(video_path, caption):
     if not (TELEGRAM_TOKEN and TELEGRAM_CHAT_ID):
@@ -624,21 +705,27 @@ def main():
         time.sleep(random.randint(60, 480))
 
     item = choose_target()
-    print(f"Target: {item['latin']} / {item['indonesia']}")
-    photos = download_species_photos(item["latin"])
-    hook = generate_english_hook(item)
-    script = generate_english_script(item)
+    content_format = choose_content_format(item)
+    print(f"Target: {item['latin']} / {item['indonesia']} | format={content_format}")
+
+    media = download_species_media(item["latin"])
+    hook = generate_english_hook(item, content_format)
+    script = generate_english_script(item, content_format)
     segments = segment_script(script)
     duration, script = asyncio.run(make_tts_and_subtitles(script, segments))
-    final_duration = render_reel(photos, hook, duration)
+    final_duration = render_reel(media, hook, duration)
 
-    # Short social caption: keep the post text separate from the longer narration.
     caption = (
-        f"{item['indonesia']} ({item['latin']}) — wildlife of Java.\n\n"
-        f"{item['fakta_singkat']}\n\n"
+        f"{item['indonesia']} ({item['latin']}) — Java wildlife.\\n\\n"
+        f"{item['fakta_singkat']}\\n\\n"
+        f"Did you know this species?\\n\\n"
         f"#JavaWildlife #IndonesiaWildlife #FloraFaunaJawa #Biodiversity"
     )
-    print(f"VIDEO QA OK: {final_duration:.1f}s; voice={VOICE}; photos={len(photos)}")
+    footage_count = sum(1 for x in media if x["kind"] == "video")
+    print(
+        f"VIDEO QA OK: {final_duration:.1f}s; voice={VOICE}; "
+        f"media={len(media)}; footage={footage_count}; format={content_format}"
+    )
 
     if POST_MODE == "dry_run":
         if not (TELEGRAM_TOKEN and TELEGRAM_CHAT_ID):
@@ -658,17 +745,20 @@ def main():
     try:
         if status["telegram"] != "success":
             status["telegram"] = "success" if send_telegram(FILE_FINAL, caption) else "failed"
-
         if status["facebook"] != "success":
             status["facebook"] = "success" if post_facebook(FILE_FINAL, caption) else "failed"
-
         if status["instagram"] != "success":
             ig_id = get_instagram_id()
             if not ig_id:
                 raise RuntimeError("Instagram Business Account ID tidak ditemukan.")
             status["instagram"] = "success" if post_instagram(FILE_FINAL, caption, ig_id) else "failed"
     finally:
-        save_history_record(item["latin"], status)
+        save_history_record(item["latin"], {
+            **status,
+            "format": content_format,
+            "media_count": len(media),
+            "footage_count": footage_count,
+        })
 
     if status["facebook"] != "success" or status["instagram"] != "success":
         raise RuntimeError(f"Publishing incomplete: {status}")
