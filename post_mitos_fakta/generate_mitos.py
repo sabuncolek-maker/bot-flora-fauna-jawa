@@ -10,6 +10,9 @@ import requests
 from jinja2 import Template
 from playwright.sync_api import sync_playwright
 from groq import Groq
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from post_shared.quality import request_json, atomic_write_json
 
 # --- Kunci rahasia (sama seperti bot utama) ---
 GROQ_KEY = str(os.environ.get("GROQ_API_KEY") or "").strip()
@@ -75,7 +78,7 @@ def buat_slide(template, data_slide, output_path):
 def dapat_ig_user_id():
     """Ambil ID akun Instagram Bisnis yang tertaut ke Halaman Facebook."""
     url = f"https://graph.facebook.com/v21.0/{FB_PAGE_ID}?fields=instagram_business_account&access_token={FB_ACCESS_TOKEN}"
-    data = requests.get(url, timeout=10).json()
+    data = request_json("GET", url, timeout=15)
     akun = data.get("instagram_business_account")
     if not akun:
         print("Peringatan: tidak ada akun Instagram Bisnis yang tertaut.")
@@ -101,7 +104,7 @@ def upload_ke_facebook(path_gambar):
     photo_id = res["id"]
     # Ambil URL publik dari foto yang baru diupload
     url_foto = f"https://graph.facebook.com/v21.0/{photo_id}?fields=images&access_token={FB_ACCESS_TOKEN}"
-    images = requests.get(url_foto, timeout=10).json().get("images", [])
+    images = request_json("GET", url_foto, timeout=15).get("images", [])
     if not images:
         return None, None
     return photo_id, images[0]["source"]
