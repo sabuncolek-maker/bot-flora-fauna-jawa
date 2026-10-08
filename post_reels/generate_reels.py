@@ -198,6 +198,7 @@ def generate_naskah_indonesia(scientific_name, nama_indonesia=""):
     Tulis narasi dokumenter satwa liar dalam Bahasa Indonesia tentang '{scientific_name}' ({nama_indonesia}) dari Pulau Jawa.
     {fakta_panduan}
     Gaya: dokumenter alam yang santai dan ramah, seperti bercerita ke teman. Jangan kaku seperti buku teks.
+    ATURAN KERAS akurasi: DILARANG menyebut habitat atau latar spesifik yang tidak terverifikasi (jangan tulis "hutan lebat", "lereng berkabut", "kanopi hutan", "rawa", "puncak gunung" atau sejenisnya). Footage hanya foto biasa yang tidak menunjukkan habitat spesifik. Fokus hanya pada: apa spesiesnya, fakta uniknya, perilakunya, dan kenapa ia istimewa. Narasi harus tetap benar walau footage-nya hanya padang rumput biasa.
     Panjang: tepat 4 kalimat berbeda, total 60-65 kata.
     Format: kembalikan HANYA teks narasi Bahasa Indonesia. Tanpa markdown, tanpa judul.
     """
@@ -301,7 +302,8 @@ def render_multi_photo_reels(photo_files, hook_text=""):
        tidak dipotong seperti sebelumnya
     2. GERAKAN HALUS - zoom sangat perlahan (di-upscale 2x dulu agar
        tidak geter), 2 variasi: zoom masuk / zoom keluar
-    3. TRANSISI FADE - antar foto ada efek fade 0.5 detik
+    3. HARD CUT - antar foto potongan langsung tanpa efek
+       (fade xfade menimbulkan ghosting/frame hantu, tidak cocok untuk reels)
     4. DURASI BERVARIASI - tiap foto 3-6 detik acak
     5. MUSIK LATAR ALAM - brown noise lembut di bawah narasi
     6. HOOK TEXT - teks besar di tengah layar selama 3 detik pertama
@@ -323,7 +325,7 @@ def render_multi_photo_reels(photo_files, hook_text=""):
             "MarginV=0'"
         )
         print(f"Hook overlay aktif: {hook_text.strip()}")
-    # Pengaman: butuh minimal 2 foto (1 foto tidak bisa dibuat transisi xfade)
+    # Pengaman: butuh minimal 2 foto agar reels tidak terlalu pendek
     if len(photo_files) < 2:
         raise RuntimeError(
             f"Butuh minimal 2 foto untuk render reels, hanya dapat {len(photo_files)}. "
@@ -340,7 +342,6 @@ def render_multi_photo_reels(photo_files, hook_text=""):
         "z='max(1.09-0.0006*on\\,1.0)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'",
     ]
 
-    DURASI_FADE = 0.5  # durasi transisi antar foto (detik)
     FPS = 25
 
     cmd = ["ffmpeg", "-y"]
@@ -374,17 +375,15 @@ def render_multi_photo_reels(photo_files, hook_text=""):
         )
         print(f"  Foto {idx+1}: durasi {dur} detik, gerakan acak")
 
-    # --- Langkah 2: gabung semua klip dengan transisi fade halus ---
-    # Rumus offset xfade: (total durasi sejauh ini) - (durasi fade)
-    offset = durasi_list[0] - DURASI_FADE
-    xfade = (f"[v0][v1]xfade=transition=fade:duration={DURASI_FADE}:"
-             f"offset={offset:.2f}[x1]")
-    for i in range(2, len(photo_files)):
-        offset += durasi_list[i - 1] - DURASI_FADE
-        xfade += (f";[x{i-1}][v{i}]xfade=transition=fade:duration={DURASI_FADE}:"
-                  f"offset={offset:.2f}[x{i}]")
-    filter_parts.append(xfade)
-    label_akhir = f"[x{len(photo_files)-1}]"
+    # --- Langkah 2: gabung semua klip dengan HARD CUT (concat) ---
+    # xfade fade sebelumnya menimbulkan ghosting (frame hantu/ganda) saat
+    # transisi karena dua klip zoom yang berbeda di-overlay. Hard cut via
+    # concat lebih bersih dan ritmenya lebih cocok untuk reels.
+    label_input = "".join(f"[v{i}]" for i in range(len(photo_files)))
+    filter_parts.append(
+        f"{label_input}concat=n={len(photo_files)}:v=1:a=0[vconcat]"
+    )
+    label_akhir = "[vconcat]"
 
     # --- Langkah 3: hook overlay + subtitle + musik latar + render final ---\n
     sub_filter = (
@@ -433,7 +432,7 @@ def render_multi_photo_reels(photo_files, hook_text=""):
         FILE_FINAL
     ]
 
-    print("Merender video final dengan transisi halus...")
+    print("Merender video final (hard cut, tanpa transisi)...")
     subprocess.run(cmd, check=True, cwd=BASE_DIR)
     print("Render final Reels sukses:", FILE_FINAL)
 
