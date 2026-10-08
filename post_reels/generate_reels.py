@@ -14,7 +14,7 @@ from groq import Groq
 # ==========================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FILE_AUDIO = os.path.join(BASE_DIR, "narasi.mp3")
-FILE_SRT = os.path.join(BASE_DIR, "narasi.srt")
+FILE_ASS = os.path.join(BASE_DIR, "narasi.ass")
 FILE_FINAL = os.path.join(BASE_DIR, "reels_30detik.mp4")
 FILE_HISTORY = os.path.join(BASE_DIR, "history_reels.json")
 
@@ -269,6 +269,28 @@ def format_srt_time(seconds):
     hours = int(seconds // 3600)
     return f"{hours:02d}:{mins:02d}:{secs:02d},{millis:03d}"
 
+def format_ass_time(seconds):
+    cs = int((seconds - int(seconds)) * 100)
+    secs = int(seconds) % 60
+    mins = int(seconds // 60) % 60
+    hours = int(seconds // 3600)
+    return f"{hours}:{mins:02d}:{secs:02d}.{cs:02d}"
+
+ASS_HEADER = """[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, Bold, Outline, Alignment, MarginV
+Style: Narasi,DejaVu Sans,40,&H00FFFFFF,&H00000000,1,3,2,80
+Style: Hook,DejaVu Sans,72,&H00FFFFFF,&H00000000,1,4,5,0
+
+[Events]
+Format: Layer, Start, End, Style, Text
+"""
+
 async def create_audio_and_clean_subtitles(text):
     """
     Membuat audio TTS dan subtitle gaya modern (TikTok/Reels) yang SINKRON
@@ -320,7 +342,15 @@ async def create_audio_and_clean_subtitles(text):
         kata_per_segmen.append([k for k in kata if k])
 
     # --- Generate audio via stream + kumpulkan WordBoundary ---
-    tts = edge_tts.Communicate(teks_tts, voice)
+    # SSML: rate -18% (lebih lambat, tenang) + pitch -7% (lebih hangat)
+    # Alasan: suara default GadisNeural terlalu cepat dan cempreng menurut Indra
+    ssml_tts = (
+        '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="id-ID">'
+        f'<voice name="{voice}">'
+        f'<prosody rate="-18%" pitch="-7%">{teks_tts}</prosody>'
+        '</voice></speak>'
+    )
+    tts = edge_tts.Communicate(ssml_tts, voice)
     word_bounds = []  # [(kata_normalisasi, start_detik, end_detik)]
     audio_chunks = []
     try:
@@ -340,7 +370,7 @@ async def create_audio_and_clean_subtitles(text):
         print(f"TTS selesai: {len(word_bounds)} WordBoundary terkumpul")
     except Exception as e:
         print(f"Stream TTS gagal ({e}), fallback ke save biasa")
-        await edge_tts.Communicate(teks_tts, voice).save(FILE_AUDIO)
+        await edge_tts.Communicate(ssml_tts, voice).save(FILE_AUDIO)
         word_bounds = []
 
     # --- Hitung timing tiap segmen ---
@@ -421,26 +451,24 @@ async def create_audio_and_clean_subtitles(text):
                       lambda m: '{\\c&H00D7FF&}' + m.group(1) + '{\\c}',
                       baris_teks)
 
-    srt_lines = []
+    ass_events = []
     for i, (segmen, (t0, t1)) in enumerate(zip(segmen_list, segmen_timing), start=1):
         # Jika pakai WordBoundary (timing sudah aktual), tambahkan offset hook
         # Jika fallback proporsional, timing sudah dimulai dari 3.0
         if word_bounds:
             t0, t1 = t0 + OFFSET_HOOK, t1 + OFFSET_HOOK
-        # Beri jeda kecil antar segmen agar tidak menumpuk (50ms gap)
-        t1_tampil = t1
-        baris_srt = '\\N'.join(warnai_kuning(b) for b in segmen)
-        srt_lines.append(f"{i}\n{format_srt_time(t0)} --> {format_srt_time(t1_tampil)}\n{baris_srt}\n")
+        baris_ass = '\\N'.join(warnai_kuning(b) for b in segmen)
+        ass_events.append(f"Dialogue: 0,{format_ass_time(t0)},{format_ass_time(t1)},Narasi,{baris_ass}")
 
-    with open(FILE_SRT, "w", encoding="utf-8") as f_sub:
-        f_sub.write("\n".join(srt_lines))
+    with open(FILE_ASS, "w", encoding="utf-8") as f_sub:
+        f_sub.write(ASS_HEADER + "\n".join(ass_events) + "\n")
     metode = "WordBoundary (sinkron presisi)" if word_bounds else "proporsional (fallback)"
     print(f"Audio MP3 dan Subtitle modern selesai! ({len(segmen_list)} segmen, metode: {metode})")
 
 # ==========================================
 # 6. Render Video 6 Foto & Hardsub (FFmpeg)
 # ==========================================
-FILE_HOOK_SRT = os.path.join(BASE_DIR, "hook.srt")
+FILE_HOOK_ASS = os.path.join(BASE_DIR, "hook.ass")
 
 def render_multi_photo_reels(photo_files, hook_text=""):
     """
@@ -460,21 +488,14 @@ def render_multi_photo_reels(photo_files, hook_text=""):
        atas layar (tidak menutupi hewan), kata kunci berwarna kuning,
        segmen pendek 2 baris yang ganti mengikuti narasi
     """
-    # Tulis SRT hook: tampil 0.5 - 3.0 detik, font BESAR di tengah
+    # Tulis ASS hook: tampil 0.5 - 3.0 detik, font BESAR di tengah
+    # PlayRes 1080x1920 = ukuran font dalam pixel asli (tanpa bug scaling SRT)
     hook_filter = ""
     if hook_text and hook_text.strip():
-        with open(FILE_HOOK_SRT, "w", encoding="utf-8") as f_hook:
-            f_hook.write("1\n00:00:00,500 --> 00:00:03,000\n" + hook_text.strip() + "\n")
-        hook_filter = (
-            "subtitles=hook.srt:force_style='Alignment=5\\,"
-            "FontSize=36\\,"
-            "Bold=1\\,"
-            "PrimaryColour=&H00FFFFFF\\,"
-            "OutlineColour=&H00000000\\,"
-            "BorderStyle=1\\,"
-            "Outline=2\\,"
-            "MarginV=0'"
-        )
+        hook_ass = ASS_HEADER + f"Dialogue: 0,0:00:00.50,0:00:03.00,Hook,{hook_text.strip()}\n"
+        with open(FILE_HOOK_ASS, "w", encoding="utf-8") as f_hook:
+            f_hook.write(hook_ass)
+        hook_filter = "ass=hook.ass"
         print(f"Hook overlay aktif: {hook_text.strip()}")
     # Pengaman: butuh minimal 2 foto agar reels tidak terlalu pendek
     if len(photo_files) < 2:
@@ -543,16 +564,9 @@ def render_multi_photo_reels(photo_files, hook_text=""):
     #   (hook = penarik perhatian, subtitle = pendukung)
     # - Outline=4: outline hitam TEBAL agar terbaca di atas video apapun
     # - Kata kunci kuning via tag ASS {\\c&H00D7FF&} di file SRT
-    sub_filter = (
-        "subtitles=narasi.srt:force_style='Alignment=8\\,"
-        "FontSize=26\\,"
-        "Bold=1\\,"
-        "PrimaryColour=&H00FFFFFF\\,"
-        "OutlineColour=&H00000000\\,"
-        "BorderStyle=1\\,"
-        "Outline=4\\,"
-        "MarginV=1080'"
-    )
+    # ASS dengan PlayRes 1080x1920: FontSize 40px asli, posisi bawah (Alignment=2)
+    # Ukuran dan posisi seperti SEBELUM revisi bahasa Indonesia (yang Indra suka)
+    sub_filter = "ass=narasi.ass"
 
     # Musik latar: brown noise (suara dengung rendah seperti angin)
     # difilter lowpass agar halus, volume 0.10 (terdengar lembut tapi
