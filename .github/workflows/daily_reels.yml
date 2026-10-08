@@ -19,6 +19,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: flora-fauna-reels
+  cancel-in-progress: false
+
 jobs:
   build-and-post-reels:
     runs-on: ubuntu-latest
@@ -59,7 +63,7 @@ jobs:
           name: video-dry-run
           path: post_reels/reels_30detik.mp4
 
-      - name: Simpan Catatan Riwayat ke Repositori
+      # Reels tetap sengaja OFF di script melalui POSTING_AKTIF=False.\n      - name: Simpan Catatan Riwayat ke Repositori
         if: inputs.dry_run != true
         run: |
           git config --global user.name "github-actions[bot]"
