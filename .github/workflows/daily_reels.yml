@@ -3,18 +3,15 @@ name: Generate & Post Reels 30 Detik
 on:
   workflow_dispatch:
     inputs:
-      dry_run:
-        description: 'Mode test (true = bikin video saja, tidak posting)'
-        required: false
-        default: false
-        type: boolean
-  schedule:
-    # 23:37 WIB (16:37 UTC)
-    - cron: '37 16 * * *'
-    # 02:43 WIB (19:43 UTC)
-    - cron: '43 19 * * *'
-    # 05:21 WIB (22:21 UTC - dimajukan agar sebelum jam 6 pagi sudah selesai)
-    - cron: '21 22 * * *'
+      mode:
+        description: "disabled = OFF, dry_run = render + Telegram review, production = publish"
+        required: true
+        default: disabled
+        type: choice
+        options:
+          - disabled
+          - dry_run
+          - production
 
 permissions:
   contents: write
@@ -30,43 +27,31 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-
-      - name: Pasang FFmpeg
+          python-version: "3.11"
+      - name: Install FFmpeg
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
-
       - name: Install Dependencies
         run: pip install -r requirements.txt
-
-      - name: Jalankan Render dan Posting Reels
+      - name: Run Reels Pipeline
         env:
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          FB_PAGE_ACCESS_TOKEN: ${{ secrets.FB_PAGE_ACCESS_TOKEN }}
-          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          DRY_RUN: ${{ inputs.dry_run }}
+          GROQ_API_KEY: \${{ secrets.GROQ_API_KEY }}
+          FB_PAGE_ACCESS_TOKEN: \${{ secrets.FB_PAGE_ACCESS_TOKEN }}
+          FB_PAGE_ID: \${{ secrets.FB_PAGE_ID }}
+          TELEGRAM_BOT_TOKEN: \${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: \${{ secrets.TELEGRAM_CHAT_ID }}
+          POST_MODE: \${{ inputs.mode }}
         run: |
           cd post_reels
           python generate_reels.py
-
-      - name: Upload Video Hasil Dry Run
-        if: inputs.dry_run == true
-        uses: actions/upload-artifact@v4
-        with:
-          name: video-dry-run
-          path: post_reels/reels_30detik.mp4
-
-      # Reels tetap sengaja OFF di script melalui POSTING_AKTIF=False.\n      - name: Simpan Catatan Riwayat ke Repositori
-        if: inputs.dry_run != true
+      - name: Save Reels History
+        if: inputs.mode == 'production'
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add post_reels/history_reels.json
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Update riwayat satwa reels [skip ci]" && git pull --rebase origin main && git push)
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update reels publishing state [skip ci]" && git pull --rebase origin main && git push)
