@@ -191,32 +191,67 @@ def download_species_photos(latin):
     return saved
 
 def generate_english_script(item):
-    client = Groq(api_key=GROQ_KEY)
-    base_prompt = f"""Write a short wildlife documentary narration in natural English about {item['latin']} ({item['indonesia']}) from Java, Indonesia.
+    """
+    Generate English narration with a deterministic fallback.
+    The fallback is intentional: a failed/empty LLM response must never stop
+    the Reels pipeline when the curated editorial fact is already available.
+    """
+    fact = re.sub(r"\\s+", " ", str(item.get("fakta_singkat", "")).strip()).strip()
+    species = item["latin"]
+    common_name = item["indonesia"]
+
+    def fallback():
+        text = (
+            f"Meet {species}, known in Indonesia as {common_name}. "
+            f"{fact} "
+            f"This species is part of Java's remarkable natural heritage. "
+            f"Its story shows why careful observation and protection of wildlife matter. "
+            f"From its distinctive traits to its place in the island's biodiversity, "
+            f"{species} is a species worth knowing and respecting."
+        )
+        return re.sub(r"\\s+", " ", text).strip()
+
+    # LLM is preferred for natural documentary phrasing, but it is not a
+    # single point of failure.
+    try:
+        client = Groq(api_key=GROQ_KEY)
+        base_prompt = f"""Write a short wildlife documentary narration in natural English about {species} ({common_name}) from Java, Indonesia.
 
 ONLY use these editorial facts as factual claims:
-- {item['fakta_singkat']}
+- {fact}
 Do not invent population numbers, locations, measurements, behavior, conservation status, superlatives, or habitat details.
 Do not turn uncertain claims into absolute claims.
 Write 55-90 words, aiming for about 65-80 words, suitable for roughly 25-32 seconds at a calm pace.
 Tone: calm, cinematic, intelligent, documentary-style. No YouTuber language.
 Return only the narration, no title, bullets, markdown, URLs, or citations."""
-    last_count = 0
-    for attempt in range(3):
-        prompt = base_prompt
-        if attempt:
-            prompt += "\nIMPORTANT: The previous draft failed the word-count check. Keep this version between 55 and 90 words."
-        response = client.chat.completions.create(
-            model="openai/gpt-oss-120b",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.15,
-            max_tokens=180,
-        )
-        text = re.sub(r"\s+", " ", response.choices[0].message.content.strip()).strip()
-        last_count = len(text.split())
-        if 45 <= last_count <= 105:
-            return text
-    raise RuntimeError(f"Narration length QA failed after 3 attempts ({last_count} words).")
+        last_count = 0
+
+        for attempt in range(3):
+            prompt = base_prompt
+            if attempt:
+                prompt += "\nIMPORTANT: Return a complete narration between 55 and 90 words. Do not return an empty response."
+            response = client.chat.completions.create(
+                model="openai/gpt-oss-120b",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.15,
+                max_tokens=180,
+            )
+            raw = response.choices[0].message.content if response.choices else ""
+            text = re.sub(r"\\s+", " ", (raw or "").strip()).strip()
+            last_count = len(text.split())
+            if 45 <= last_count <= 105:
+                return text
+            if last_count == 0:
+                break
+    except Exception as exc:
+        print(f"Groq narration unavailable, using deterministic fallback: {exc}")
+
+    text = fallback()
+    count = len(text.split())
+    if 45 <= count <= 105:
+        print(f"Using deterministic English narration fallback ({count} words).")
+        return text
+    raise RuntimeError(f"Deterministic narration fallback failed QA ({count} words).")
 
 def generate_english_hook(item):
     # Hook is derived from the curated editorial hook, translated/reframed,
