@@ -570,7 +570,7 @@ def _vision_analyze_batch(batch, latin, common_name):
         "model": VISION_MODEL,
         "messages": [{"role": "user", "content": content}],
         "temperature": 0.1,
-        "max_completion_tokens": 1200,
+        "max_completion_tokens": 700,
         "reasoning_effort": "none",
         "response_format": {
             "type": "json_schema",
@@ -624,6 +624,21 @@ def _vision_analyze_batch(batch, latin, common_name):
         except Exception as exc:
             last_error = exc
             status_code = getattr(exc, "status_code", None)
+            error_text = str(exc).lower()
+            request_too_large = (
+                status_code == 429
+                and (
+                    "output tokens per minute" in error_text
+                    or "requested" in error_text and "exceed" in error_text
+                    or "reduce max_tokens" in error_text
+                )
+            )
+            if request_too_large:
+                raise RuntimeError(
+                    "Groq Vision request ditolak karena budget output melebihi limit "
+                    "token-per-minute akun. Kurangi max_completion_tokens atau upgrade "
+                    "tier Groq; retry tidak akan membantu untuk error ini."
+                ) from exc
             if status_code == 429:
                 delay = 61
             elif status_code in {408, 425, 500, 502, 503, 504}:
