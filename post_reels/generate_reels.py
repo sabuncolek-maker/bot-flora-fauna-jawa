@@ -355,14 +355,38 @@ def generate_english_script(item, content_format):
     common_name = item["indonesia"]
 
     def fallback():
+        # Deterministic fallback must always pass narration QA even when Groq/API
+        # is unavailable. Keep it factual and long enough for the TTS window.
         templates = {
-            "guess": f"Can you identify this animal? It is {common_name}, known scientifically as {species}. {fact}",
-            "one_fact": f"Here is one fact worth remembering about {common_name}. {fact}",
-            "detective": f"Wildlife case file: identify the species from the evidence. The answer is {common_name}, {species}. {fact}",
-            "myth_fact": f"Myth or fact? {fact} This statement is presented as a fact.",
-            "baby_adult": f"Look closely at the young and adult stages of {common_name}. {fact}",
-            "threatened": f"This is {common_name}, {species}. {fact} Protecting its habitat matters.",
-            "java_file": f"Java wildlife file: {common_name}, {species}. {fact}",
+            "guess": (
+                f"Can you identify this animal? It is {common_name}, known scientifically as {species}. "
+                f"Here is the clue: {fact} This is one of the remarkable species found in Java."
+            ),
+            "one_fact": (
+                f"Here is one fact worth remembering about {common_name}. {fact} "
+                f"This species is part of Java's remarkable wildlife and biodiversity."
+            ),
+            "detective": (
+                f"Wildlife case file: can you identify the species from the evidence? "
+                f"The answer is {common_name}, scientifically known as {species}. {fact} "
+                f"Another fascinating story from Java's wildlife."
+            ),
+            "myth_fact": (
+                f"Myth or fact? {fact} The answer is fact, based on the supplied species information. "
+                f"This is {common_name}, a species associated with Java's wildlife."
+            ),
+            "baby_adult": (
+                f"Look closely at the young and adult stages of {common_name}. {fact} "
+                f"These visual details can help us recognize this species in Java."
+            ),
+            "threatened": (
+                f"This is {common_name}, scientifically known as {species}. {fact} "
+                f"Its story is part of Java's important wildlife heritage."
+            ),
+            "java_file": (
+                f"Java wildlife file: {common_name}, scientifically known as {species}. {fact} "
+                f"One more remarkable species from the biodiversity of Java."
+            ),
         }
         return re.sub(r"\s+", " ", templates.get(content_format, templates["java_file"])).strip()
 
