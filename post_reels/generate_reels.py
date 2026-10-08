@@ -134,32 +134,115 @@ def choose_target():
     raise RuntimeError("Tidak ada spesies kurasi dengan occurrence GBIF Jawa yang tervalidasi.")
 
 def get_photo_candidates(latin):
+    """
+    Return only species-specific image candidates.
+    Source priority:
+      1) iNaturalist Research Grade observations
+      2) Wikimedia Commons file search
+      3) Wikipedia REST image as a final species-specific fallback
+    No generic stock-image fallback is allowed.
+    """
     urls = []
     sources = []
+
+    def add(url, meta):
+        if not url or url in urls:
+            return False
+        lower = url.lower()
+        if any(token in lower for token in [".svg", "map", "range", "distribution", "illustration", "plate"]):
+            return False
+        urls.append(url)
+        sources.append(meta)
+        return True
+
+    # iNaturalist: gather from several observations/pages so one observation
+    # or one license filter cannot leave us with too few usable images.
     try:
-        data = http_json("GET", "https://api.inaturalist.org/v1/observations",
-                         params={"taxon_name": latin, "has[]": "photos", "quality_grade": "research",
-                                 "license": "cc0,cc-by", "per_page": 30}, timeout=20)
-        for obs in data.get("results", []):
-            for photo in obs.get("photos", []):
-                url = (photo.get("url") or "").replace("/square.", "/large.")
-                if url and url not in urls:
-                    urls.append(url)
-                    sources.append({"source": "iNaturalist", "url": url, "license": "CC0/CC BY"})
-                if len(urls) >= MAX_PHOTOS:
-                    return list(zip(urls, sources))
+        for page in range(1, 4):
+            data = http_json(
+                "GET",
+                "https://api.inaturalist.org/v1/observations",
+                params={
+                    "taxon_name": latin,
+                    "has[]": "photos",
+                    "quality_grade": "research",
+                    "per_page": 50,
+                    "page": page,
+                },
+                timeout=20,
+            )
+            results = data.get("results", [])
+            for obs in results:
+                for photo in obs.get("photos", []):
+                    # Accept only explicitly licensed reusable photos.
+                    license_code = (photo.get("license_code") or "").lower()
+                    if license_code and license_code not in {"cc0", "cc-by", "cc-by-sa"}:
+                        continue
+                    url = (photo.get("url") or "").replace("/square.", "/large.")
+                    if add(url, {
+                        "source": "iNaturalist",
+                        "url": url,
+                        "license": license_code or "license-not-returned",
+                    }) and len(urls) >= MAX_PHOTOS:
+                        return list(zip(urls, sources))
+            if not results:
+                break
     except Exception as exc:
         print(f"iNaturalist gagal: {exc}")
+
+    # Wikimedia Commons API is more reliable than the Wikipedia REST
+    # summary endpoint and can return multiple species-specific files.
     try:
-        data = http_json("GET", f"https://en.wikipedia.org/api/rest_v1/page/summary/{requests.utils.quote(latin)}",
-                         timeout=15)
+        data = http_json(
+            "GET",
+            "https://commons.wikimedia.org/w/api.php",
+            params={
+                "action": "query",
+                "generator": "search",
+                "gsrsearch": f"\\"{latin}\\"",
+                "gsrnamespace": 6,
+                "gsrlimit": 50,
+                "prop": "imageinfo",
+                "iiprop": "url|mime",
+                "iiurlwidth": 1600,
+                "format": "json",
+                "formatversion": 2,
+            },
+            timeout=20,
+        )
+        for page in data.get("query", {}).get("pages", []):
+            info = (page.get("imageinfo") or [{}])[0]
+            mime = (info.get("mime") or "").lower()
+            url = info.get("thumburl") or info.get("url")
+            if not mime.startswith("image/") or mime == "image/svg+xml":
+                continue
+            if add(url, {
+                "source": "Wikimedia Commons",
+                "url": url,
+                "license": "Commons file; verify file license metadata",
+                "title": page.get("title"),
+            }) and len(urls) >= MAX_PHOTOS:
+                return list(zip(urls, sources))
+    except Exception as exc:
+        print(f"Wikimedia Commons gagal: {exc}")
+
+    # Wikipedia REST: keep as a final fallback, but failure is non-fatal.
+    try:
+        data = http_json(
+            "GET",
+            f"https://en.wikipedia.org/api/rest_v1/page/summary/{requests.utils.quote(latin)}",
+            timeout=15,
+        )
         img = (data.get("originalimage") or {}).get("source")
-        if img and not any(x in img.lower() for x in [".svg", "map", "range", "distribution", "illustration", "plate"]):
-            if img not in urls:
-                urls.append(img)
-                sources.append({"source": "Wikimedia/Wikipedia", "url": img, "license": "verify Commons license"})
+        if add(img, {
+            "source": "Wikimedia/Wikipedia",
+            "url": img,
+            "license": "verify Commons license",
+        }) and len(urls) >= MAX_PHOTOS:
+            return list(zip(urls, sources))
     except Exception as exc:
         print(f"Wikipedia gagal: {exc}")
+
     return list(zip(urls, sources))
 
 def download_species_photos(latin):
