@@ -3,3 +3,5 @@ playwright
 requests
 jinja2
 edge-tts
+Pillow
+imagehash
