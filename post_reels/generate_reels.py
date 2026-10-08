@@ -1,5 +1,4 @@
 import os
-import sys
 import re
 import json
 import time
@@ -498,7 +497,6 @@ def render_multi_photo_reels(photo_files, hook_text=""):
 
     cmd = ["ffmpeg", "-y"]
     filter_parts = []
-    durasi_list = []
 
     # --- Langkah 1: tiap foto jadi klip dengan gerakan acak ---
     # PENTING: input adalah 1 gambar statis (tanpa -loop, tanpa -t).
@@ -507,7 +505,6 @@ def render_multi_photo_reels(photo_files, hook_text=""):
     #  di-zoom N kali -> video jadi 10 menit!)
     for idx, photo in enumerate(photo_files):
         dur = random.choice([3, 4, 5, 6])  # durasi acak 3-6 detik
-        durasi_list.append(dur)
         gerakan = random.choice(GERAKAN_KAMERA)
         frames = dur * FPS
 
@@ -571,15 +568,17 @@ def render_multi_photo_reels(photo_files, hook_text=""):
     if hook_filter:
         rantai_video += f"{hook_filter}[vhook];[vhook]"
     rantai_video += f"{sub_filter}[vout]"
+    # SINKRONISASI AUDIO-SUBTITLE:
+    # Subtitle di-offset +3.0 detik (mulai setelah hook text selesai).
+    # Agar TETAP SINKRON, narasi audio juga di-delay 3 detik via adelay.
+    # Tanpa ini, subtitle muncul 3 detik SETELAH kata diucapkan (tidak sinkron!).
+    idx_audio = len(photo_files)
     full_filter = (
         ";".join(filter_parts) + ";" + rantai_video + ";"
-        + ambient_filter + ";[aud_in][amb]amix=inputs=2:duration=first[aout]"
+        + ambient_filter + f";[{idx_audio}:a]adelay=3000|3000[aud_del];"
+        + "[aud_del][amb]amix=inputs=2:duration=first[aout]"
     )
-
-    idx_audio = len(photo_files)
     cmd += ["-i", FILE_AUDIO]
-    # Beri label pada audio input agar bisa dirujuk di filter
-    full_filter = full_filter.replace("[aud_in]", f"[{idx_audio}:a]")
     cmd += [
         "-filter_complex", full_filter,
         "-map", "[vout]",
@@ -743,7 +742,7 @@ def post_facebook_reels(video_path, caption_text):
 # Alur Utama
 # ==========================================
 def main():
-    # Jeda acak singkat (10 detik) agar saat dites manual tidak menunggu lama
+    # Jeda acak 1-8 menit agar pola posting terlihat natural (tidak seperti bot)
     jeda_detik = random.randint(60, 480)
     print(f"Menunggu jeda alami selama {jeda_detik} detik sebelum memproses...")
     time.sleep(jeda_detik)
