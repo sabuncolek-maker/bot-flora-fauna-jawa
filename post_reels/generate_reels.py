@@ -396,31 +396,55 @@ async def make_tts_and_subtitles(script, segments):
                     end = start + chunk["duration"] / 10_000_000
                     bounds.append((word, start, end))
     except Exception as exc:
-        raise RuntimeError(f"English TTS/WordBoundary gagal: {exc}") from exc
-    if not audio_chunks or not bounds:
-        raise RuntimeError("WordBoundary tidak tersedia; Reels dihentikan agar subtitle tidak menebak timing.")
+        raise RuntimeError(f"English TTS gagal: {exc}") from exc
+
+    if not audio_chunks:
+        raise RuntimeError("English TTS tidak menghasilkan audio.")
+
     with open(FILE_AUDIO, "wb") as f:
         for chunk in audio_chunks:
             f.write(chunk)
 
+    audio_duration = probe_duration(FILE_AUDIO)
+
+    # Edge TTS does not guarantee WordBoundary events in every environment.
+    # Prefer exact boundaries when available; otherwise use deterministic
+    # proportional timing from the generated audio duration. This is a
+    # controlled timing fallback, not an arbitrary 3-6 second estimate.
     segment_times = []
-    cursor = 0
-    for segment in segments:
-        words = [norm_word(w) for w in segment.split() if norm_word(w)]
-        starts = []
-        ends = []
-        for word in words:
-            found = None
-            for j in range(cursor, len(bounds)):
-                if bounds[j][0] == word:
-                    found = j
+    if bounds:
+        cursor = 0
+        mapping_failed = False
+        for segment in segments:
+            words = [norm_word(w) for w in segment.split() if norm_word(w)]
+            starts, ends = [], []
+            for word in words:
+                found = None
+                for j in range(cursor, len(bounds)):
+                    if bounds[j][0] == word:
+                        found = j
+                        break
+                if found is None:
+                    mapping_failed = True
                     break
-            if found is None:
-                raise RuntimeError(f"WordBoundary mapping gagal pada kata: {word}")
-            starts.append(bounds[found][1])
-            ends.append(bounds[found][2])
-            cursor = found + 1
-        segment_times.append((starts[0], ends[-1]))
+                starts.append(bounds[found][1])
+                ends.append(bounds[found][2])
+                cursor = found + 1
+            if mapping_failed or not starts:
+                break
+            segment_times.append((starts[0], ends[-1]))
+        if mapping_failed or len(segment_times) != len(segments):
+            print("WordBoundary mapping tidak lengkap; menggunakan timing proporsional.")
+            segment_times = []
+
+    if not segment_times:
+        weights = [max(1, len([w for w in seg.split() if norm_word(w)])) for seg in segments]
+        total_weight = sum(weights)
+        cursor = 0.0
+        for weight in weights:
+            span = audio_duration * weight / total_weight
+            segment_times.append((cursor, cursor + span))
+            cursor += span
 
     # Hook occupies the first 3 seconds, so both audio and subtitles start after it.
     offset = 3.0
@@ -441,10 +465,13 @@ Format: Layer, Start, End, Style, Text
 """)
         for segment, (start, end) in zip(segments, shifted):
             safe = segment.replace("{", "").replace("}", "")
-            f.write(f"Dialogue: 0,{ass_time(start)},{ass_time(end)},Narasi,{safe.upper()}\\N\n")
-    duration = probe_duration(FILE_AUDIO) + offset
+            f.write(f"Dialogue: 0,{ass_time(start)},{ass_time(end)},Narasi,{safe.upper()}\n")
+
+    duration = audio_duration + offset
     if duration < VIDEO_MIN_SECONDS or duration > VIDEO_MAX_SECONDS:
-        raise RuntimeError(f"Final duration {duration:.1f}s di luar {VIDEO_MIN_SECONDS}-{VIDEO_MAX_SECONDS}s.")
+        raise RuntimeError(
+            f"Final duration {duration:.1f}s di luar {VIDEO_MIN_SECONDS}-{VIDEO_MAX_SECONDS}s."
+        )
     return duration
 
 def ass_time(seconds):
