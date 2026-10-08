@@ -6,10 +6,14 @@ import random
 import asyncio
 import subprocess
 import hashlib
+import tempfile
+from io import BytesIO
 from datetime import datetime, timezone
 
 import requests
 import edge_tts
+import imagehash
+from PIL import Image
 from groq import Groq
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -27,6 +31,7 @@ VOICE = "en-US-JennyNeural"
 MIN_PHOTOS = 4
 MAX_PHOTOS = 6
 MIN_UNIQUE_PHOTOS = 4
+PHASH_MAX_DISTANCE = 8
 VIDEO_MIN_SECONDS = 22.0
 VIDEO_MAX_SECONDS = 35.0
 FB_API = "https://graph.facebook.com/v21.0"
@@ -114,10 +119,12 @@ def load_species():
         data = json.load(f)
     if not isinstance(data, list) or not data:
         raise RuntimeError("spesies_bintang.json kosong/tidak valid.")
-    required = {"latin", "indonesia", "fakta_hook", "fakta_singkat"}
+    required = {"latin", "indonesia", "fakta_hook", "fakta_singkat", "type"}
     for item in data:
         if not required.issubset(item):
             raise RuntimeError(f"Entry spesies tidak lengkap: {item}")
+        if item["type"] not in {"flora", "fauna"}:
+            raise RuntimeError(f"Tipe spesies harus flora/fauna: {item}")
     return data
 
 def gbif_occurrence_exists(latin):
@@ -223,7 +230,7 @@ def get_media_candidates(latin, common_name):
             for obs in results:
                 for photo in obs.get("photos", []):
                     license_code = (photo.get("license_code") or "").lower()
-                    if license_code and license_code not in {"cc0", "cc-by", "cc-by-sa"}:
+                    if license_code not in {"cc0", "cc-by", "cc-by-sa"}:
                         continue
                     url = (photo.get("url") or "").replace("/square.", "/large.")
                     add(url, "photo", "iNaturalist", {
@@ -258,34 +265,66 @@ def get_media_candidates(latin, common_name):
     except Exception as exc:
         print(f"Wikimedia photo search gagal: {exc}")
 
-    try:
-        data = http_json(
-            "GET",
-            f"https://en.wikipedia.org/api/rest_v1/page/summary/{requests.utils.quote(latin)}",
-            timeout=15,
-        )
-        add((data.get("originalimage") or {}).get("source"), "photo", "Wikimedia/Wikipedia",
-            {"license": "verify Commons license"})
-    except Exception as exc:
-        print(f"Wikipedia gagal: {exc}")
-
+    # Wikipedia article images are not used as an automated media source.
+    # The article license does not prove that the individual image is reusable.
     return candidates
+
+
+def visual_phash(path, kind):
+    """Create a perceptual hash from a photo or a representative video frame."""
+    try:
+        if kind == "photo":
+            with Image.open(path) as image:
+                return imagehash.phash(image.convert("RGB"))
+        with tempfile.NamedTemporaryFile(suffix=".jpg") as tmp:
+            probe = subprocess.run(
+                ["ffmpeg", "-y", "-ss", "0.5", "-i", path, "-frames:v", "1",
+                 "-q:v", "3", "-f", "image2", tmp.name],
+                capture_output=True, timeout=20
+            )
+            if probe.returncode != 0:
+                return None
+            with Image.open(tmp.name) as image:
+                return imagehash.phash(image.convert("RGB"))
+    except Exception as exc:
+        print(f"pHash gagal untuk {path}: {exc}")
+        return None
+
+
+def is_visually_duplicate(candidate_hash, accepted_hashes):
+    if candidate_hash is None:
+        return False
+    return any(candidate_hash - previous <= PHASH_MAX_DISTANCE for previous in accepted_hashes)
 
 
 def download_species_media(latin, common_name):
     candidates = get_media_candidates(latin, common_name)
     saved = []
     hashes = set()
+    visual_hashes = []
     metadata = []
+
+    def accept_candidate(candidate, data, path):
+        digest = hashlib.sha256(data).hexdigest()
+        if digest in hashes:
+            return False
+        visual_hash = visual_phash(path, candidate["kind"])
+        if is_visually_duplicate(visual_hash, visual_hashes):
+            print(f"Media ditolak: visual terlalu mirip | {candidate['source']} | {candidate.get('title', '')}")
+            os.remove(path)
+            return False
+        hashes.add(digest)
+        if visual_hash is not None:
+            visual_hashes.append(visual_hash)
+        saved.append({"path": path, "kind": candidate["kind"]})
+        metadata.append({**candidate, "path": path, "phash": str(visual_hash) if visual_hash else None})
+        return True
 
     for candidate in candidates:
         if candidate["kind"] != "video" or sum(x["kind"] == "video" for x in saved) >= 2:
             continue
         try:
             data = http_bytes(candidate["url"])
-            digest = hashlib.sha256(data).hexdigest()
-            if digest in hashes:
-                continue
             mime = (candidate.get("mime") or "").lower()
             ext = ".webm" if "webm" in mime else ".ogv" if "ogg" in mime else ".mp4"
             path = os.path.join(BASE_DIR, f"media_{len(saved) + 1}{ext}")
@@ -300,10 +339,8 @@ def download_species_media(latin, common_name):
             if probe.returncode != 0 or not probe.stdout.strip():
                 os.remove(path)
                 continue
-            hashes.add(digest)
-            saved.append({"path": path, "kind": "video"})
-            metadata.append({**candidate, "path": path})
-            print(f"Footage unik diterima: {len(saved)} | {candidate['source']} | {candidate.get('title', '')}")
+            if accept_candidate(candidate, data, path):
+                print(f"Footage unik diterima: {len(saved)} | {candidate['source']} | {candidate.get('title', '')}")
         except Exception as exc:
             print(f"Footage ditolak: {candidate['url']} ({exc})")
 
@@ -312,9 +349,6 @@ def download_species_media(latin, common_name):
             continue
         try:
             data = http_bytes(candidate["url"])
-            digest = hashlib.sha256(data).hexdigest()
-            if digest in hashes:
-                continue
             path = os.path.join(BASE_DIR, f"media_{len(saved) + 1}.jpg")
             with open(path, "wb") as f:
                 f.write(data)
@@ -326,10 +360,8 @@ def download_species_media(latin, common_name):
             if probe.returncode != 0 or not probe.stdout.strip():
                 os.remove(path)
                 continue
-            hashes.add(digest)
-            saved.append({"path": path, "kind": "photo"})
-            metadata.append({**candidate, "path": path})
-            print(f"Foto unik diterima: {len(saved)} | {candidate['source']}")
+            if accept_candidate(candidate, data, path):
+                print(f"Foto unik diterima: {len(saved)} | {candidate['source']}")
         except Exception as exc:
             print(f"Foto ditolak: {candidate['url']} ({exc})")
 
@@ -339,7 +371,13 @@ def download_species_media(latin, common_name):
             f"minimum {MIN_UNIQUE_PHOTOS}. Tidak akan mengulang media yang sama."
         )
 
-    random.shuffle(saved)
+    # Story order: lead with motion when available, then alternate remaining media.
+    videos = [x for x in saved if x["kind"] == "video"]
+    photos = [x for x in saved if x["kind"] == "photo"]
+    random.shuffle(videos)
+    random.shuffle(photos)
+    saved = (videos[:1] + photos + videos[1:])[:MAX_PHOTOS]
+
     with open(os.path.join(BASE_DIR, "media_sources.json"), "w", encoding="utf-8") as f:
         json.dump(metadata, f, ensure_ascii=False, indent=2)
     return saved
@@ -347,11 +385,14 @@ def download_species_media(latin, common_name):
 
 def choose_content_format(item):
     fact = item["fakta_singkat"].lower()
-    formats = ["guess", "one_fact", "detective", "myth_fact", "java_file"]
-    if any(x in fact for x in ["infant", "born", "young", "baby"]):
-        formats.append("baby_adult")
-    if "threatened" in fact or "endangered" in fact:
-        formats.append("threatened")
+    if item["type"] == "flora":
+        formats = ["plant_mystery", "one_fact", "detective", "java_file"]
+    else:
+        formats = ["guess", "one_fact", "detective", "myth_fact", "java_file"]
+        if any(x in fact for x in ["infant", "born", "young", "baby"]):
+            formats.append("baby_adult")
+        if "threatened" in fact or "endangered" in fact:
+            formats.append("threatened")
     return random.choice(formats)
 
 
@@ -359,11 +400,16 @@ def generate_english_script(item, content_format):
     fact = re.sub(r"\s+", " ", str(item.get("fakta_singkat", "")).strip()).strip()
     species = item["latin"]
     common_name = item["indonesia"]
+    subject = "animal" if item["type"] == "fauna" else "plant"
 
     def fallback():
         # Deterministic fallback must always pass narration QA even when Groq/API
         # is unavailable. Keep it factual and long enough for the TTS window.
         templates = {
+            "plant_mystery": (
+                f"Can you identify this plant? It is {common_name}, known scientifically as {species}. "
+                f"Here is the clue: {fact} This is one of Java's remarkable plants."
+            ),
             "guess": (
                 f"Can you identify this animal? It is {common_name}, known scientifically as {species}. "
                 f"Here is the clue: {fact} This is one of the remarkable species found in Java."
@@ -390,7 +436,7 @@ def generate_english_script(item, content_format):
                 f"Its story is part of Java's important wildlife heritage."
             ),
             "java_file": (
-                f"Java wildlife file: {common_name}, scientifically known as {species}. {fact} "
+                f"Java biodiversity file: {common_name}, scientifically known as {species}. {fact} "
                 f"One more remarkable species from the biodiversity of Java."
             ),
         }
@@ -399,7 +445,8 @@ def generate_english_script(item, content_format):
     try:
         client = Groq(api_key=GROQ_KEY)
         instructions = {
-            "guess": "Build a curiosity-first identification puzzle. Do not reveal the answer until near the end.",
+            "plant_mystery": "Build a curiosity-first plant identification puzzle. Do not call the plant an animal.",
+            "guess": "Build a curiosity-first animal identification puzzle. Do not reveal the answer until near the end.",
             "one_fact": "Open immediately with the single most surprising fact. No generic introduction.",
             "detective": "Write it like a mini wildlife investigation with two or three clues, then reveal the species.",
             "myth_fact": "Start with 'Myth or fact?' Present the supplied fact and clearly reveal the verdict.",
@@ -409,6 +456,7 @@ def generate_english_script(item, content_format):
         }
         prompt = f"""Write a high-retention English narration for a short vertical wildlife Reel about {species} ({common_name}) from Java, Indonesia.
 
+SUBJECT TYPE: {subject}
 FORMAT: {content_format}
 {instructions.get(content_format, instructions["java_file"])}
 
@@ -443,6 +491,14 @@ Return only narration. No title, bullets, markdown, URLs, hashtags, or citations
 
 
 def generate_english_hook(item, content_format):
+    if item["type"] == "flora":
+        hooks = {
+            "plant_mystery": "CAN YOU IDENTIFY THIS PLANT?",
+            "one_fact": item.get("fakta_hook", "ONE WILD FACT"),
+            "detective": "BOTANICAL DETECTIVE",
+            "java_file": "JAVA PLANT FILE",
+        }
+        return hooks.get(content_format, "JAVA PLANT")
     hooks = {
         "guess": "CAN YOU IDENTIFY THIS ANIMAL?",
         "one_fact": item.get("fakta_hook", "ONE WILD FACT"),
@@ -592,7 +648,15 @@ def probe_duration(path):
     return float(r.stdout.strip())
 
 def render_reel(media, hook, duration):
-    per_media = duration / len(media)
+    weights = []
+    for i, item in enumerate(media):
+        weight = 1.18 if item["kind"] == "video" else 0.92
+        if i == 0:
+            weight *= 1.10
+        weights.append(weight)
+    total_weight = sum(weights)
+    media_durations = [duration * w / total_weight for w in weights]
+
     cmd = ["ffmpeg", "-y"]
     filters = []
     fps = 25
@@ -601,8 +665,8 @@ def render_reel(media, hook, duration):
         path = item["path"]
         kind = item["kind"]
         cmd += ["-stream_loop", "-1"] if kind == "video" else ["-loop", "1"]
-        cmd += ["-t", f"{per_media:.3f}", "-i", path]
-        frames = max(1, round(per_media * fps))
+        cmd += ["-t", f"{media_durations[i]:.3f}", "-i", path]
+        frames = max(1, round(media_durations[i] * fps))
         motion = "1+0.00045*on" if i % 2 == 0 else "max(1.08-0.00045*on\\,1.0)"
 
         if kind == "video":
@@ -737,6 +801,29 @@ def post_facebook(video_path, caption):
         raise RuntimeError(f"Facebook Reel publish gagal: {pub}")
     return True
 
+def cleanup_runtime_artifacts(keep_final=False):
+    names = {"narasi_en.mp3", "narasi_en.ass", "hook_en.ass", "media_sources.json"}
+    for name in names:
+        path = os.path.join(BASE_DIR, name)
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except OSError as exc:
+            print(f"Cleanup gagal: {path}: {exc}")
+    for name in os.listdir(BASE_DIR):
+        if name.startswith("media_") and os.path.isfile(os.path.join(BASE_DIR, name)):
+            try:
+                os.remove(os.path.join(BASE_DIR, name))
+            except OSError as exc:
+                print(f"Cleanup gagal: {name}: {exc}")
+    if not keep_final:
+        try:
+            if os.path.exists(FILE_FINAL):
+                os.remove(FILE_FINAL)
+        except OSError as exc:
+            print(f"Cleanup gagal: {FILE_FINAL}: {exc}")
+
+
 def main():
     if POST_MODE not in {"disabled", "dry_run", "production"}:
         raise RuntimeError("POST_MODE harus disabled, dry_run, atau production.")
@@ -775,7 +862,8 @@ def main():
             raise RuntimeError("Dry-run membutuhkan TELEGRAM_BOT_TOKEN dan TELEGRAM_CHAT_ID.")
         if not send_telegram(FILE_FINAL, caption):
             raise RuntimeError("Telegram review gagal; dry-run dianggap gagal.")
-        print("DRY RUN OK: video rendered and delivered to Telegram; no Facebook/Instagram publishing and no history update.")
+        cleanup_runtime_artifacts()
+        print("DRY RUN OK: video rendered, delivered to Telegram, and runtime artifacts cleaned; no publishing and no history update.")
         return
 
     previous = get_last_platform_status(item["latin"])
@@ -805,6 +893,7 @@ def main():
 
     if status["facebook"] != "success" or status["instagram"] != "success":
         raise RuntimeError(f"Publishing incomplete: {status}")
+    cleanup_runtime_artifacts()
     print("REELS PRODUCTION SUCCESS:", status)
 
 if __name__ == "__main__":
