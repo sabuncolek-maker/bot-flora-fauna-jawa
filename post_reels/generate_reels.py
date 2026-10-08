@@ -71,10 +71,17 @@ def http_bytes(url, retries=3, timeout=30):
             valid_magic = (
                 data.startswith(b"\xff\xd8\xff") or
                 data.startswith(b"\x89PNG\r\n\x1a\n") or
-                (data.startswith(b"RIFF") and data[8:12] == b"WEBP")
+                (data.startswith(b"RIFF") and data[8:12] == b"WEBP") or
+                (len(data) > 12 and data[4:8] == b"ftyp") or
+                data.startswith(b"\x1aE\xdf\xa3")
             )
-            if not valid_magic or ("image/" not in content_type and not content_type.startswith("application/octet-stream")):
-                raise RuntimeError("Response bukan file gambar valid.")
+            valid_type = (
+                content_type.startswith("image/") or
+                content_type.startswith("video/") or
+                content_type.startswith("application/octet-stream")
+            )
+            if not valid_magic or not valid_type:
+                raise RuntimeError("Response bukan media gambar/video valid.")
             return data
         except (requests.RequestException, RuntimeError) as exc:
             last = exc
@@ -192,6 +199,7 @@ def get_media_candidates(latin):
                 add(info.get("url"), "video", "Wikimedia Commons", {
                     "title": page.get("title"),
                     "license": (ext.get("LicenseShortName") or {}).get("value", "unknown"),
+                    "mime": mime,
                 })
     except Exception as exc:
         print(f"Wikimedia video search gagal: {exc}")
