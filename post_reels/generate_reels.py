@@ -38,6 +38,9 @@ MIN_PIXEL_DISTANCE = 0.075
 HARD_DUPLICATE_PHASH_DISTANCE = 4
 HARD_DUPLICATE_DHASH_DISTANCE = 4
 HARD_DUPLICATE_PIXEL_DISTANCE = 0.025
+FINAL_DUPLICATE_PHASH_DISTANCE = 12
+FINAL_DUPLICATE_DHASH_DISTANCE = 12
+FINAL_DUPLICATE_PIXEL_DISTANCE = 0.12
 MIN_VIDEO_SCENE_DISTANCE = 0.08
 MAX_MEDIA_CANDIDATES_TO_SCORE = 30
 VISION_MODEL = "qwen/qwen3.8-27b"
@@ -699,10 +702,14 @@ def apply_vision_editor(media_items, latin, common_name):
             f"media lolos semantic visual verification untuk {latin}."
         )
 
-    # Select a diverse sequence using Vision's semantic shot/composition labels.
+    # Final visual verification: Vision-approved files must still be
+    # materially distinct before entering the renderer.
     selected = []
+    selected_profiles = []
+    selected_hashes = set()
     used_shot_types = set()
-    for item in sorted(
+
+    ranked = sorted(
         approved,
         key=lambda x: (
             x.get("vision_score", 0),
@@ -710,22 +717,62 @@ def apply_vision_editor(media_items, latin, common_name):
             x.get("relevance", 0),
         ),
         reverse=True,
-    ):
+    )
+
+    def final_duplicate(item):
+        digest = item.get("sha256")
+        if digest and digest in selected_hashes:
+            return True
+        try:
+            profile = _profile_from_file(item["path"])
+        except Exception as exc:
+            print(f"Final visual audit gagal membaca media: {item.get('path')} | {exc}")
+            return True
+
+        for previous in selected_profiles:
+            distance = _visual_distance(profile, previous)
+            signals = (
+                distance["phash"] <= FINAL_DUPLICATE_PHASH_DISTANCE,
+                distance["dhash"] <= FINAL_DUPLICATE_DHASH_DISTANCE,
+                distance["pixels"] <= FINAL_DUPLICATE_PIXEL_DISTANCE,
+            )
+            if sum(signals) >= 2:
+                print(
+                    f"Final visual duplicate: {item.get('path')} | "
+                    f"phash={distance['phash']} dhash={distance['dhash']} "
+                    f"pixels={distance['pixels']:.3f}"
+                )
+                return True
+        return False
+
+    for item in ranked:
+        if final_duplicate(item):
+            continue
+        try:
+            profile = _profile_from_file(item["path"])
+        except Exception:
+            continue
         shot_type = (item.get("vision") or {}).get("shot_type", "unknown")
         diversity_bonus = 1 if shot_type not in used_shot_types else 0
         item["_selection_score"] = item.get("vision_score", 0) + diversity_bonus * 8
         selected.append(item)
+        selected_profiles.append(profile)
+        if item.get("sha256"):
+            selected_hashes.add(item["sha256"])
         used_shot_types.add(shot_type)
+        if len(selected) >= MAX_PHOTOS:
+            break
 
-    selected.sort(
-        key=lambda x: (
-            x.get("_selection_score", 0),
-            x.get("visual_novelty", 0),
-            x.get("relevance", 0),
-        ),
-        reverse=True,
+    print(
+        f"Final visual audit: {len(selected)}/{len(approved)} unique visual assets "
+        f"after SHA-256 + perceptual verification."
     )
-    selected = selected[:MAX_PHOTOS]
+
+    if len(selected) < MIN_STORY_MEDIA:
+        raise RuntimeError(
+            f"Final visual diversity gate gagal: hanya {len(selected)}/{MIN_STORY_MEDIA} "
+            f"visual berbeda setelah final verification untuk {latin}."
+        )
 
     if sum(x["kind"] == "photo" for x in selected) < MIN_STORY_PHOTOS:
         photo_candidates = [x for x in approved if x["kind"] == "photo" and x not in selected]
@@ -805,6 +852,7 @@ def download_species_media(latin, common_name):
         metadata.append({
             **candidate,
             "path": path,
+            "sha256": digest,
             "phash": str(representative["phash"]),
             "dhash": str(representative["dhash"]),
             "visual_novelty": round(_story_novelty_score(representative, accepted_profiles[:-1]), 2),
@@ -939,6 +987,15 @@ def download_species_media(latin, common_name):
             f, ensure_ascii=False, indent=2
         )
 
+    print(
+        "FINAL MEDIA SELECTION: "
+        + " | ".join(
+            f"{index + 1}. {os.path.basename(item['path'])} "
+            f"sha256={item.get('sha256', '')[:12]} "
+            f"shot={(item.get('vision') or {}).get('shot_type', 'unknown')}"
+            for index, item in enumerate(saved)
+        )
+    )
     print(
         f"Vision story QA OK: {len(saved)} visual; "
         f"photos={sum(x['kind'] == 'photo' for x in saved)}; "
