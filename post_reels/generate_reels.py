@@ -280,7 +280,9 @@ def download_species_media(latin):
             digest = hashlib.sha256(data).hexdigest()
             if digest in hashes:
                 continue
-            path = os.path.join(BASE_DIR, f"media_{len(saved) + 1}.mp4")
+            mime = (candidate.get("mime") or "").lower()
+            ext = ".webm" if "webm" in mime else ".ogv" if "ogg" in mime else ".mp4"
+            path = os.path.join(BASE_DIR, f"media_{len(saved) + 1}{ext}")
             with open(path, "wb") as f:
                 f.write(data)
             probe = subprocess.run(
