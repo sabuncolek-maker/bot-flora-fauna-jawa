@@ -199,7 +199,7 @@ def get_photo_candidates(latin):
             params={
                 "action": "query",
                 "generator": "search",
-                "gsrsearch": f"\\"{latin}\\"",
+                "gsrsearch": latin,
                 "gsrnamespace": 6,
                 "gsrlimit": 50,
                 "prop": "imageinfo",
