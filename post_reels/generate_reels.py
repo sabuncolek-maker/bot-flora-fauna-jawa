@@ -30,6 +30,7 @@ VOICE = "en-US-JennyNeural"
 MAX_PHOTOS = 6
 MIN_UNIQUE_PHOTOS = 4
 MIN_SUBJECT_MEDIA = 4
+MIN_RELEVANCE_SCORE = 50
 PHASH_MAX_DISTANCE = 8
 VIDEO_MIN_SECONDS = 22.0
 VIDEO_MAX_SECONDS = 35.0
@@ -376,6 +377,12 @@ def download_species_media(latin, common_name):
 
     subject_relevant_count = 0
     for candidate in candidates:
+        if candidate.get("relevance", 0) < MIN_RELEVANCE_SCORE:
+            print(
+                f"Media ditolak: relevance rendah ({candidate.get('relevance', 0)}) | "
+                f"{candidate['source']} | {candidate.get('title', '')}"
+            )
+            continue
         if candidate["kind"] != "video" or sum(x["kind"] == "video" for x in saved) >= 2:
             continue
         try:
@@ -404,6 +411,12 @@ def download_species_media(latin, common_name):
             print(f"Footage ditolak: {candidate['url']} ({exc})")
 
     for candidate in candidates:
+        if candidate.get("relevance", 0) < MIN_RELEVANCE_SCORE:
+            print(
+                f"Media ditolak: relevance rendah ({candidate.get('relevance', 0)}) | "
+                f"{candidate['source']} | {candidate.get('title', '')}"
+            )
+            continue
         if candidate["kind"] != "photo" or len(saved) >= MAX_PHOTOS:
             continue
         try:
