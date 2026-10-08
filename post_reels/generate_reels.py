@@ -33,7 +33,8 @@ PHASH_MAX_DISTANCE = 8
 VIDEO_MIN_SECONDS = 22.0
 VIDEO_MAX_SECONDS = 35.0
 FB_API = "https://graph.facebook.com/v21.0"
-HEADERS = {"User-Agent": "FloraFaunaJawa/2.0"}
+HEADERS = {"User-Agent": "FloraFaunaJawa/2.1 (+https://github.com/sabuncolek-maker/bot-flora-fauna-jawa)"}
+WIKI_HEADERS = {**HEADERS, "Accept": "application/json"}
 
 GROQ_KEY = os.environ.get("GROQ_API_KEY", "").strip()
 FB_TOKEN = os.environ.get("FB_PAGE_ACCESS_TOKEN", "").strip()
@@ -58,7 +59,18 @@ def http_json(method, url, retries=3, timeout=30, **kwargs):
             last = exc
             if attempt < retries - 1:
                 time.sleep(2 ** attempt + random.random())
-    raise RuntimeError(f"HTTP gagal setelah {retries} percobaan: {url}") from last
+    detail = f" ({last})" if last else ""
+    raise RuntimeError(f"HTTP gagal setelah {retries} percobaan: {url}{detail}") from last
+
+def wiki_json(params, retries=4, timeout=30):
+    return http_json(
+        "GET",
+        "https://commons.wikimedia.org/w/api.php",
+        retries=retries,
+        timeout=timeout,
+        headers=WIKI_HEADERS,
+        params=params,
+    )
 
 def http_bytes(url, retries=3, timeout=30):
     last = None
@@ -90,7 +102,8 @@ def http_bytes(url, retries=3, timeout=30):
             last = exc
             if attempt < retries - 1:
                 time.sleep(2 ** attempt + random.random())
-    raise RuntimeError(f"Download gambar gagal setelah {retries} percobaan: {url}") from last
+    detail = f" ({last})" if last else ""
+    raise RuntimeError(f"Download media gagal setelah {retries} percobaan: {url}{detail}") from last
 
 def load_history():
     try:
@@ -193,8 +206,7 @@ def get_media_candidates(latin, common_name):
         candidates.append({"url": url, "kind": kind, "source": source, **(meta or {})})
 
     try:
-        data = http_json(
-            "GET", "https://commons.wikimedia.org/w/api.php",
+        data = wiki_json(
             params={
                 "action": "query", "generator": "search", "gsrsearch": f'"{latin}" OR "{common_name}"',
                 "gsrnamespace": 6, "gsrlimit": 100,
@@ -419,11 +431,11 @@ def generate_english_script(item, content_format):
             "detective": (
                 f"Case file: can you identify the species from the evidence? "
                 f"The answer is {common_name}, scientifically known as {species}. {fact} "
-                f"Another fascinating story from Java's wildlife."
+                f"Another fascinating story from Java's biodiversity."
             ),
             "myth_fact": (
                 f"Myth or fact? {fact} The answer is fact, based on the supplied species information. "
-                f"This is {common_name}, a species associated with Java's wildlife."
+                f"This is {common_name}, a species associated with Java's biodiversity."
             ),
             "baby_adult": (
                 f"Look closely at the young and adult stages of {common_name}. {fact} "
@@ -431,7 +443,7 @@ def generate_english_script(item, content_format):
             ),
             "threatened": (
                 f"This is {common_name}, scientifically known as {species}. {fact} "
-                f"Its story is part of Java's important wildlife heritage."
+                f"Its story is part of Java's important biodiversity heritage."
             ),
             "java_file": (
                 f"Java biodiversity file: {common_name}, scientifically known as {species}. {fact} "
