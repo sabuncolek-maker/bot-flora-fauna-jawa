@@ -257,7 +257,7 @@ def format_srt_time(seconds):
     return f"{hours:02d}:{mins:02d}:{secs:02d},{millis:03d}"
 
 async def create_audio_and_clean_subtitles(text):
-    voice = "id-ID-ArdiNeural"  # Bahasa Indonesia, suara pria
+    voice = "id-ID-GadisNeural"  # Bahasa Indonesia, suara wanita yang tenang (permintaan Indra)
     tts = edge_tts.Communicate(text, voice)
     await tts.save(FILE_AUDIO)
 
