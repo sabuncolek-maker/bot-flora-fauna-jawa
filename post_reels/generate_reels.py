@@ -192,22 +192,31 @@ def download_species_photos(latin):
 
 def generate_english_script(item):
     client = Groq(api_key=GROQ_KEY)
-    prompt = f"""Write a short wildlife documentary narration in natural English about {item['latin']} ({item['indonesia']}) from Java, Indonesia.
+    base_prompt = f"""Write a short wildlife documentary narration in natural English about {item['latin']} ({item['indonesia']}) from Java, Indonesia.
 
 ONLY use these editorial facts as factual claims:
 - {item['fakta_singkat']}
 Do not invent population numbers, locations, measurements, behavior, conservation status, superlatives, or habitat details.
 Do not turn uncertain claims into absolute claims.
-Length: 70-95 words, suitable for roughly 25-32 seconds at a calm pace.
+Write 55-90 words, aiming for about 65-80 words, suitable for roughly 25-32 seconds at a calm pace.
 Tone: calm, cinematic, intelligent, documentary-style. No YouTuber language.
 Return only the narration, no title, bullets, markdown, URLs, or citations."""
-    r = client.chat.completions.create(model="openai/gpt-oss-120b",
-                                       messages=[{"role": "user", "content": prompt}],
-                                       temperature=0.2, max_tokens=180)
-    text = re.sub(r"\s+", " ", r.choices[0].message.content.strip()).strip()
-    if not (45 <= len(text.split()) <= 105):
-        raise RuntimeError("Narration length di luar batas QA.")
-    return text
+    last_count = 0
+    for attempt in range(3):
+        prompt = base_prompt
+        if attempt:
+            prompt += "\nIMPORTANT: The previous draft failed the word-count check. Keep this version between 55 and 90 words."
+        response = client.chat.completions.create(
+            model="openai/gpt-oss-120b",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.15,
+            max_tokens=180,
+        )
+        text = re.sub(r"\s+", " ", response.choices[0].message.content.strip()).strip()
+        last_count = len(text.split())
+        if 45 <= last_count <= 105:
+            return text
+    raise RuntimeError(f"Narration length QA failed after 3 attempts ({last_count} words).")
 
 def generate_english_hook(item):
     # Hook is derived from the curated editorial hook, translated/reframed,
