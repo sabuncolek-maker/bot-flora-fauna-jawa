@@ -541,7 +541,7 @@ def render_multi_photo_reels(photo_files, hook_text=""):
             f"[bg{idx}][fg{idx}]overlay=(W-w)/2:(H-h)/2,"
             f"scale=2160:3840,"
             f"zoompan={gerakan}:d={frames}:s=1080x1920:fps={FPS},"
-            f"settb=AVTB[v{idx}]"
+            f"settb=AVTB,setsar=1[v{idx}]"
         )
         print(f"  Foto {idx+1}: durasi {dur} detik, gerakan acak")
 
