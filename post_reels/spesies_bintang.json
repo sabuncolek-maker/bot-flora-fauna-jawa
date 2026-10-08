@@ -1,1 +1,142 @@
-[{"fakta_hook":"BUNGA PARASIT LANGKA","fakta_singkat":"Bunga parasit asli Jawa yang hanya mekar beberapa hari lalu membusuk.","indonesia":"Padma raksasa Jawa","latin":"Rafflesia patma"},{"fakta_hook":"BUNGA ABADI GUNUNG","fakta_singkat":"Bunga yang tidak pernah layu meski dipetik, hanya tumbuh di gunung tinggi Jawa.","indonesia":"Edelweis Jawa","latin":"Anaphalis javanica"},{"fakta_hook":"GARUDA INDONESIA","fakta_singkat":"Burung pemangsa yang menjadi inspirasi lambang Garuda Pancasila, hanya ada di Jawa.","indonesia":"Elang Jawa","latin":"Nisaetus bartelsi"},{"fakta_hook":"HANTU HUTAN JAWA","fakta_singkat":"Kucing besar misterius yang populasinya kurang dari 250 ekor di alam liar.","indonesia":"Macan tutul Jawa","latin":"Panthera pardus melas"},{"fakta_hook":"TERLANGKA DI DUNIA","fakta_singkat":"Hanya tersisa sekitar 80 ekor di Taman Nasional Ujung Kulon, tidak ada di tempat lain di dunia.","indonesia":"Badak Jawa","latin":"Rhinoceros sondaicus"},{"fakta_hook":"PENYANYI HUTAN","fakta_singkat":"Primata yang bernyanyi duet setiap pagi untuk menandai wilayahnya, hanya ada di Jawa.","indonesia":"Owa Jawa","latin":"Hylobates moloch"},{"fakta_hook":"MONYET BERJENGGOT","fakta_singkat":"Lutung berbulu abu-abu dengan jenggot putih lebat, endemik hutan Jawa Barat.","indonesia":"Surili Jawa","latin":"Presbytis comata"},{"fakta_hook":"BAYI EMAS","fakta_singkat":"Bayi lutung lahir berwarna oranye terang seperti emas, berubah hitam saat dewasa.","indonesia":"Lutung Jawa","latin":"Trachypithecus auratus"},{"fakta_hook":"KODOK BERDARAH","fakta_singkat":"Katak merah menyala yang hanya hidup di sungai jernih pegunungan Jawa Barat.","indonesia":"Kodok merah","latin":"Leptophryne cruentata"},{"fakta_hook":"PRIMATA BERBISA","fakta_singkat":"Satu-satunya primata berbisa di dunia, racunnya ada di siku lengannya.","indonesia":"Kukang Jawa","latin":"Nycticebus javanicus"},{"fakta_hook":"SISIK BAJA","fakta_singkat":"Mamalia bersisik yang menggulung jadi bola tak tertembus saat terancam.","indonesia":"Trenggiling","latin":"Manis javanica"},{"fakta_hook":"ANJING HUTAN","fakta_singkat":"Anjing liar pemburu kawanan yang populasinya kritis di Jawa.","indonesia":"Ajag","latin":"Cuon alpinus"},{"fakta_hook":"MERAK ASLI JAWA","fakta_singkat":"Burung merak hijau yang populasinya terus menyusut akibat perburuan.","indonesia":"Merak hijau","latin":"Pavo muticus"},{"fakta_hook":"KATAK BISA TERBANG","fakta_singkat":"Katak hijau yang meluncur antar pohon memakai selaput lebar di kakinya.","indonesia":"Katak terbang Jawa","latin":"Rhacophorus reinwardtii"},{"fakta_hook":"KUCING HUTAN MINI","fakta_singkat":"Kucing liar sekecil kucing kampung tapi pemburu ulung nokturnal.","indonesia":"Kucing kuwuk","latin":"Prionailurus bengalensis javanensis"},{"fakta_hook":"BANTENG LIAR","fakta_singkat":"Sapi liar berotot dengan lingkaran putih khas di pantatnya, masih ada di hutan Jawa.","indonesia":"Banteng","latin":"Bos javanicus"},{"fakta_hook":"RAKSASA PEMBERSIH","fakta_singkat":"Burung bangkai raksasa setinggi 1 meter yang membersihkan hutan dari bangkai.","indonesia":"Bangau tongtong","latin":"Leptoptilos javanicus"},{"fakta_hook":"TANAMAN PEMANGSA","fakta_singkat":"Tanaman karnivora yang menjebak dan mencerna serangga dalam kantongnya.","indonesia":"Kantong semar Jawa","latin":"Nepenthes gymnamphora"},{"fakta_hook":"KOPI TERMAHAL DUNIA","fakta_singkat":"Musang penghasil kopi luwak, salah satu kopi termahal di dunia.","indonesia":"Musang luwak","latin":"Paradoxurus hermaphroditus"},{"fakta_hook":"NAGA JAWA","fakta_singkat":"Kadal raksasa hingga 2 meter yang jago berenang dan memanjat pohon.","indonesia":"Biawak","latin":"Varanus salvator"}]
+[
+  {
+    "fakta_hook": "RARE PARASITIC BLOOM",
+    "fakta_singkat": "Rafflesia patma is a parasitic flowering plant native to Java. Its flower emerges briefly from its host and then withers.",
+    "indonesia": "Padma raksasa Jawa",
+    "latin": "Rafflesia patma",
+    "fact_scope": "Editorially constrained; verify against authoritative sources before production."
+  },
+  {
+    "fakta_hook": "THE MOUNTAIN EVERLASTING",
+    "fakta_singkat": "Anaphalis javanica is a high-elevation plant of Java and is widely known as the Javan edelweiss.",
+    "indonesia": "Edelweis Jawa",
+    "latin": "Anaphalis javanica",
+    "fact_scope": "Editorially constrained; verify against authoritative sources before production."
+  },
+  {
+    "fakta_hook": "JAVA'S ICONIC EAGLE",
+    "fakta_singkat": "The Javan hawk-eagle is a raptor endemic to Java and is closely associated with the island's forests.",
+    "indonesia": "Elang Jawa",
+    "latin": "Nisaetus bartelsi",
+    "fact_scope": "Editorially constrained; verify against authoritative sources before production."
+  },
+  {
+    "fakta_hook": "JAVA'S ELUSIVE CAT",
+    "fakta_singkat": "The Javan leopard is a leopard subspecies native to Java and is one of the island's threatened large carnivores.",
+    "indonesia": "Macan tutul Jawa",
+    "latin": "Panthera pardus melas",
+    "fact_scope": "Editorially constrained; verify against authoritative sources before production."
+  },
+  {
+    "fakta_hook": "ONE OF EARTH'S RAREST RHINOS",
+    "fakta_singkat": "The Javan rhinoceros survives in the wild in Java and is restricted to Ujung Kulon National Park.",
+    "indonesia": "Badak Jawa",
+    "latin": "Rhinoceros sondaicus",
+    "fact_scope": "Editorially constrained; verify against authoritative sources before production."
+  },
+  {
+    "fakta_hook": "THE FOREST SINGER",
+    "fakta_singkat": "The Javan gibbon is a primate endemic to Java. It is known for its loud calls and agile movement through trees.",
+    "indonesia": "Owa Jawa",
+    "latin": "Hylobates moloch",
+    "fact_scope": "Editorially constrained; verify against authoritative sources before production."
+  },
+  {
+    "fakta_hook": "JAVA'S BEARDED LEAF MONKEY",
+    "fakta_singkat": "The grizzled leaf monkey is a primate native to Java and is recognized by its distinctive pale facial hair.",
+    "indonesia": "Surili Jawa",
+    "latin": "Presbytis comata",
+    "fact_scope": "Editorially constrained; verify against authoritative sources before production."
+  },
+  {
+    "fakta_hook": "THE GOLDEN BABY",
+    "fakta_singkat": "Javan langur infants are born with a striking orange-gold coat that changes as they mature.",
+    "indonesia": "Lutung Jawa",
+    "latin": "Trachypithecus auratus",
+    "fact_scope": "Editorially constrained; verify against authoritative sources before production."
+  },
+  {
+    "fakta_hook": "THE RED FROG",
+    "fakta_singkat": "Leptophryne cruentata is a small frog associated with clear mountain streams in Java.",
+    "indonesia": "Kodok merah",
+    "latin": "Leptophryne cruentata",
+    "fact_scope": "Editorially constrained; verify against authoritative sources before production."
+  },
+  {
+    "fakta_hook": "THE VENOMOUS PRIMATE",
+    "fakta_singkat": "The Javan slow loris is a nocturnal primate endemic to Java. Slow lorises have a toxic bite, an unusual trait among primates.",
+    "indonesia": "Kukang Jawa",
+    "latin": "Nycticebus javanicus",
+    "fact_scope": "Editorially constrained; verify against authoritative sources before production."
+  },
+  {
+    "fakta_hook": "THE ARMORED MAMMAL",
+    "fakta_singkat": "The Sunda pangolin is a scaly mammal that curls into a ball when threatened.",
+    "indonesia": "Trenggiling",
+    "latin": "Manis javanica",
+    "fact_scope": "Editorially constrained; verify against authoritative sources before production."
+  },
+  {
+    "fakta_hook": "JAVA'S WILD DOG",
+    "fakta_singkat": "The dhole is a social wild canid that hunts cooperatively. The species is threatened across its range.",
+    "indonesia": "Ajag",
+    "latin": "Cuon alpinus",
+    "fact_scope": "Editorially constrained; verify against authoritative sources before production."
+  },
+  {
+    "fakta_hook": "JAVA'S GREEN PEAFOWL",
+    "fakta_singkat": "The green peafowl is a large pheasant native to Southeast Asia, including Java, where populations are threatened.",
+    "indonesia": "Merak hijau",
+    "latin": "Pavo muticus",
+    "fact_scope": "Editorially constrained; verify against authoritative sources before production."
+  },
+  {
+    "fakta_hook": "THE FLYING FROG",
+    "fakta_singkat": "Rhacophorus reinwardtii is a flying frog that can glide between trees using its webbed feet.",
+    "indonesia": "Katak terbang Jawa",
+    "latin": "Rhacophorus reinwardtii",
+    "fact_scope": "Editorially constrained; verify against authoritative sources before production."
+  },
+  {
+    "fakta_hook": "THE TINY WILDCAT",
+    "fakta_singkat": "The Javan leopard cat is a small wild cat native to Java and adapted to nocturnal hunting.",
+    "indonesia": "Kucing kuwuk",
+    "latin": "Prionailurus bengalensis javanensis",
+    "fact_scope": "Editorially constrained; verify against authoritative sources before production."
+  },
+  {
+    "fakta_hook": "JAVA'S WILD BANTENG",
+    "fakta_singkat": "The banteng is a wild cattle species found in Java and other parts of Southeast Asia.",
+    "indonesia": "Banteng",
+    "latin": "Bos javanicus",
+    "fact_scope": "Editorially constrained; verify against authoritative sources before production."
+  },
+  {
+    "fakta_hook": "THE FOREST CLEANER",
+    "fakta_singkat": "The lesser adjutant is a large stork that feeds on a variety of animal matter, including carrion.",
+    "indonesia": "Bangau tongtong",
+    "latin": "Leptoptilos javanicus",
+    "fact_scope": "Editorially constrained; verify against authoritative sources before production."
+  },
+  {
+    "fakta_hook": "THE CARNIVOROUS PLANT",
+    "fakta_singkat": "Nepenthes gymnamphora is a carnivorous pitcher plant found in parts of Java and captures prey in its pitcher-shaped traps.",
+    "indonesia": "Kantong semar Jawa",
+    "latin": "Nepenthes gymnamphora",
+    "fact_scope": "Editorially constrained; verify against authoritative sources before production."
+  },
+  {
+    "fakta_hook": "THE CIVET BEHIND KOPI LUWAK",
+    "fakta_singkat": "The Asian palm civet is a nocturnal mammal associated with the production of kopi luwak, although coffee production is only one aspect of its ecology.",
+    "indonesia": "Musang luwak",
+    "latin": "Paradoxurus hermaphroditus",
+    "fact_scope": "Editorially constrained; verify against authoritative sources before production."
+  },
+  {
+    "fakta_hook": "JAVA'S GIANT LIZARD",
+    "fakta_singkat": "The Asian water monitor is a large lizard that is an excellent swimmer and occurs in Java.",
+    "indonesia": "Biawak",
+    "latin": "Varanus salvator",
+    "fact_scope": "Editorially constrained; verify against authoritative sources before production."
+  }
+]
