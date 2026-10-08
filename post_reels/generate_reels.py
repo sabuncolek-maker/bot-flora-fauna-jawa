@@ -756,10 +756,16 @@ def post_facebook_reels(video_path, caption_text):
 # Alur Utama
 # ==========================================
 def main():
-    # Jeda acak 1-8 menit agar pola posting terlihat natural (tidak seperti bot)
-    jeda_detik = random.randint(60, 480)
-    print(f"Menunggu jeda alami selama {jeda_detik} detik sebelum memproses...")
-    time.sleep(jeda_detik)
+    # DRY RUN: jika env DRY_RUN=true, video dibuat tapi TIDAK diposting.
+    # Dipakai saat test manual via workflow_dispatch agar bisa review dulu.
+    DRY_RUN = os.environ.get("DRY_RUN", "").lower() == "true"
+    if DRY_RUN:
+        print("MODE DRY RUN: video akan dibuat tapi TIDAK diposting ke FB/IG/Telegram.")
+    else:
+        # Jeda acak 1-8 menit agar pola posting terlihat natural (tidak seperti bot)
+        jeda_detik = random.randint(60, 480)
+        print(f"Menunggu jeda alami selama {jeda_detik} detik sebelum memproses...")
+        time.sleep(jeda_detik)
 
     target = get_species_target()
     print(f"Target Spesies Reels: {target}")
@@ -785,6 +791,12 @@ def main():
         f"{naskah_caption}\n\n"
         f"#satwajawa #florafauna #indonesia #jawa #wildlife #biodiversity #indobizarre"
     )
+
+    if DRY_RUN:
+        print(f"DRY RUN selesai. Video tersimpan di: {FILE_FINAL}")
+        print("Tidak ada posting ke Telegram/FB/IG. History TIDAK dicatat.")
+        print("Review videonya, kalau sudah cocok run lagi tanpa dry run untuk posting.")
+        return
 
     send_to_telegram(FILE_FINAL, caption)
     fb_ok = post_facebook_reels(FILE_FINAL, caption)
