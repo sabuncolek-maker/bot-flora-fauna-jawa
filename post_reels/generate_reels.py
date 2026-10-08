@@ -58,8 +58,35 @@ def save_to_history(species_name):
 # ==========================================
 # 2. Target Spesies Liar Jawa (GBIF API)
 # ==========================================
+FILE_BINTANG = os.path.join(BASE_DIR, "spesies_bintang.json")
+
+def load_spesies_bintang():
+    """Baca daftar spesies bintang yang sudah dikurasi manual.
+
+    KENAPA ada file ini: GBIF mengembalikan spesies acak tanpa filter
+    "menarik". Daftar ini berisi ~20 spesies Jawa yang sudah diverifikasi
+    asli Jawa dan punya fakta superlatif (terbesar/terkecil/paling langka).
+    """
+    try:
+        with open(FILE_BINTANG, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Gagal baca spesies_bintang.json: {e}")
+        return []
+
 def get_species_target():
     history = load_history()
+    bintang = load_spesies_bintang()
+    bintang_tersedia = [s for s in bintang if s["latin"] not in history]
+
+    # 70% pilih dari daftar bintang (sudah kurasi, faktanya akurat),
+    # 30% random dari GBIF (variasi). KENAPA: daftar bintang menjamin
+    # kualitas & akurasi, GBIF memberi kejutan spesies baru.
+    if bintang_tersedia and random.random() < 0.7:
+        pilih = random.choice(bintang_tersedia)
+        print(f"Target dari daftar bintang: {pilih['latin']} ({pilih['indonesia']})")
+        return pilih["latin"]
+
     kandidat = []
     try:
         polygon_jawa = "POLYGON((105.1 -5.8, 114.6 -5.8, 114.6 -8.8, 105.1 -8.8, 105.1 -5.8))"
@@ -82,15 +109,13 @@ def get_species_target():
     if kandidat:
         return random.choice(kandidat)
 
-    cadangan = [
-        "Panthera pardus melas", 
-        "Nisaetus bartelsi", 
-        "Presbytis comata", 
-        "Leptophryne cruentata", 
-        "Prionailurus bengalensis"
-    ]
-    sisa = [c for c in cadangan if c not in history]
-    return random.choice(sisa if sisa else cadangan)
+    # Cadangan: pakai daftar bintang yang belum dipakai
+    if bintang_tersedia:
+        return random.choice(bintang_tersedia)["latin"]
+    # Terakhir: semua bintang (reset siklus)
+    if bintang:
+        return random.choice(bintang)["latin"]
+    return "Panthera pardus melas"
 
 # ==========================================
 # 3. Ambil 6 Foto Alam Liar (iNaturalist & Wiki)
@@ -160,13 +185,21 @@ def download_6_photos(scientific_name):
 # ==========================================
 # 4. Naskah Narasi Dokumenter (Groq AI)
 # ==========================================
-def generate_english_script(scientific_name):
+def generate_naskah_indonesia(scientific_name, nama_indonesia=""):
+    """Narasi dokumenter satwa dalam Bahasa Indonesia yang santai tapi informatif."""
     client = Groq(api_key=GROQ_KEY)
+    # Kalau ada fakta singkat dari daftar bintang, sertakan sebagai panduan akurasi
+    fakta_panduan = ""
+    for s in load_spesies_bintang():
+        if s["latin"].lower() == scientific_name.lower():
+            fakta_panduan = f"Fakta yang HARUS akurat: {s['fakta_singkat']} "
+            break
     prompt = f"""
-    Write a dramatic wildlife documentary narration about '{scientific_name}' from Java Island.
-    Style: BBC Earth or National Geographic documentary narration.
-    Length: Exactly 4 distinct sentences, total 60-65 words.
-    Format: Return ONLY the plain English narration text. No markdown, no titles.
+    Tulis narasi dokumenter satwa liar dalam Bahasa Indonesia tentang '{scientific_name}' ({nama_indonesia}) dari Pulau Jawa.
+    {fakta_panduan}
+    Gaya: dokumenter alam yang santai dan ramah, seperti bercerita ke teman. Jangan kaku seperti buku teks.
+    Panjang: tepat 4 kalimat berbeda, total 60-65 kata.
+    Format: kembalikan HANYA teks narasi Bahasa Indonesia. Tanpa markdown, tanpa judul.
     """
     completion = client.chat.completions.create(
         model="openai/gpt-oss-120b",
@@ -177,20 +210,28 @@ def generate_english_script(scientific_name):
     print(f"Naskah Narasi:\n{naskah}\n")
     return naskah
 
-def generate_hook_text(scientific_name):
+def generate_hook_text(scientific_name, nama_indonesia=""):
     """
     Membuat teks hook (pancingan) untuk 3 detik pertama video.
-    Apa itu: kalimat pendek provokatif yang muncul besar di layar pembuka.
+    Apa itu: 2-4 kata provokatif HURUF BESAR yang muncul besar di tengah layar.
     Kenapa: penonton memutuskan lanjut nonton atau scroll dalam 3 detik
     pertama. Hook yang kuat menaikkan retensi video secara signifikan.
+    Bahasa: Indonesia (audiens FB/IG Indonesia).
     """
+    # Kalau spesies ada di daftar bintang, pakai fakta_hook yang sudah kurasi
+    # (lebih akurat daripada minta LLM mengarang).
+    for s in load_spesies_bintang():
+        if s["latin"].lower() == scientific_name.lower():
+            hook = s["fakta_hook"]
+            print(f"Hook (dari daftar bintang): {hook}")
+            return hook
     try:
         client = Groq(api_key=GROQ_KEY)
         prompt = f"""
-        Write ONE short punchy hook question in English about '{scientific_name}' from Java.
-        Rules: max 8 words, curiosity-driven, no question mark needed at end is fine.
-        Examples: "Did you know this predator", "The ghost of Java forests"
-        Return ONLY the hook text, nothing else.
+        Buatkan SATU teks hook pendek dalam Bahasa Indonesia untuk video tentang '{scientific_name}' ({nama_indonesia}) dari Pulau Jawa.
+        Aturan: MAKSIMAL 4 kata, HURUF BESAR semua, provokatif, bikin penasaran.
+        Contoh yang bagus: "BUNGA TERBESAR", "RACUN MEMATIKAN", "HANTU HUTAN JAWA", "TERKECIL DI DUNIA"
+        Jawab HANYA teks hook-nya, tanpa penjelasan.
         """
         completion = client.chat.completions.create(
             model="openai/gpt-oss-120b",
@@ -198,12 +239,12 @@ def generate_hook_text(scientific_name):
             temperature=0.7,
             max_tokens=30,
         )
-        hook = completion.choices[0].message.content.strip().replace('"', '')
+        hook = completion.choices[0].message.content.strip().replace('"', '').upper()
         print(f"Hook: {hook}")
         return hook
     except Exception as e:
         print(f"Gagal buat hook, pakai bawaan: {e}")
-        return "Did you know?"
+        return "SATWA LANGKA JAWA"
 
 # ==========================================
 # 5. Audio & Subtitle Per Kalimat (Edge-TTS)
@@ -216,7 +257,7 @@ def format_srt_time(seconds):
     return f"{hours:02d}:{mins:02d}:{secs:02d},{millis:03d}"
 
 async def create_audio_and_clean_subtitles(text):
-    voice = "en-US-ChristopherNeural"
+    voice = "id-ID-ArdiNeural"  # Bahasa Indonesia, suara pria
     tts = edge_tts.Communicate(text, voice)
     await tts.save(FILE_AUDIO)
 
@@ -251,7 +292,9 @@ async def create_audio_and_clean_subtitles(text):
 # ==========================================
 # 6. Render Video 6 Foto & Hardsub (FFmpeg)
 # ==========================================
-def render_multi_photo_reels(photo_files):
+FILE_HOOK_SRT = os.path.join(BASE_DIR, "hook.srt")
+
+def render_multi_photo_reels(photo_files, hook_text=""):
     """
     Render reels:
     1. BACKGROUND BLUR - gambar tampil UTUH (fit) di atas background blur,
@@ -261,8 +304,25 @@ def render_multi_photo_reels(photo_files):
     3. TRANSISI FADE - antar foto ada efek fade 0.5 detik
     4. DURASI BERVARIASI - tiap foto 3-6 detik acak
     5. MUSIK LATAR ALAM - brown noise lembut di bawah narasi
-    (Hook text dimatikan atas permintaan user)
+    6. HOOK TEXT - teks besar di tengah layar selama 3 detik pertama
+       (Bahasa Indonesia, 2-4 kata, provokatif)
     """
+    # Tulis SRT hook: tampil 0.5 - 3.0 detik, font BESAR di tengah
+    hook_filter = ""
+    if hook_text and hook_text.strip():
+        with open(FILE_HOOK_SRT, "w", encoding="utf-8") as f_hook:
+            f_hook.write("1\n00:00:00,500 --> 00:00:03,000\n" + hook_text.strip() + "\n")
+        hook_filter = (
+            "subtitles=hook.srt:force_style='Alignment=5\\,"
+            "FontSize=36\\,"
+            "Bold=1\\,"
+            "PrimaryColour=&H00FFFFFF\\,"
+            "OutlineColour=&H00000000\\,"
+            "BorderStyle=1\\,"
+            "Outline=2\\,"
+            "MarginV=0'"
+        )
+        print(f"Hook overlay aktif: {hook_text.strip()}")
     # Pengaman: butuh minimal 2 foto (1 foto tidak bisa dibuat transisi xfade)
     if len(photo_files) < 2:
         raise RuntimeError(
@@ -326,18 +386,16 @@ def render_multi_photo_reels(photo_files):
     filter_parts.append(xfade)
     label_akhir = f"[x{len(photo_files)-1}]"
 
-    # --- Langkah 3: subtitle + musik latar + render final ---
-    # (Hook text dimatikan atas permintaan user)
-
+    # --- Langkah 3: hook overlay + subtitle + musik latar + render final ---\n
     sub_filter = (
         "subtitles=narasi.srt:force_style='Alignment=2\\,"
-        "FontSize=8\\,"
+        "FontSize=14\\,"
         "Bold=1\\,"
         "PrimaryColour=&H00FFFFFF\\,"
         "OutlineColour=&H00000000\\,"
         "BorderStyle=1\\,"
-        "Outline=1\\,"
-        "MarginV=25'"
+        "Outline=2\\,"
+        "MarginV=60'"
     )
 
     # Musik latar: brown noise (suara dengung rendah seperti angin)
@@ -349,8 +407,13 @@ def render_multi_photo_reels(photo_files):
         "[noise]lowpass=f=400,volume=0.10[amb]"
     )
 
+    # Rantai video: klip -> hook overlay (jika ada) -> subtitle narasi
+    rantai_video = f"{label_akhir}"
+    if hook_filter:
+        rantai_video += f"{hook_filter}[vhook];[vhook]"
+    rantai_video += f"{sub_filter}[vout]"
     full_filter = (
-        ";".join(filter_parts) + f";{label_akhir}{sub_filter}[vout];"
+        ";".join(filter_parts) + ";" + rantai_video + ";"
         + ambient_filter + ";[aud_in][amb]amix=inputs=2:duration=first[aout]"
     )
 
@@ -529,15 +592,23 @@ def main():
     target = get_species_target()
     print(f"Target Spesies Reels: {target}")
 
+    # Cari nama Indonesia dari daftar bintang (untuk hook & narasi)
+    nama_id = ""
+    for s in load_spesies_bintang():
+        if s["latin"].lower() == target.lower():
+            nama_id = s["indonesia"]
+            break
+
     photos = download_6_photos(target)
-    naskah = generate_english_script(target)
+    hook = generate_hook_text(target, nama_id)
+    naskah = generate_naskah_indonesia(target, nama_id)
     asyncio.run(create_audio_and_clean_subtitles(naskah))
-    render_multi_photo_reels(photos)
+    render_multi_photo_reels(photos, hook)
 
     caption = (
-        f"The hidden wildlife of Java: {target}.\n\n"
+        f"Satwa liar Jawa: {target}" + (f" ({nama_id})" if nama_id else "") + ".\n\n"
         f"{naskah}\n\n"
-        f"#wildlife #indonesia #nature #documentary #indobizarre #javanwildlife #biodiversity"
+        f"#satwajawa #florafauna #indonesia #jawa #wildlife #biodiversity #indobizarre"
     )
 
     send_to_telegram(FILE_FINAL, caption)
