@@ -29,6 +29,7 @@ POST_MODE = os.environ.get("POST_MODE", "disabled").strip().lower()
 VOICE = "en-US-JennyNeural"
 MAX_PHOTOS = 6
 MIN_UNIQUE_PHOTOS = 4
+MIN_SUBJECT_MEDIA = 4
 PHASH_MAX_DISTANCE = 8
 VIDEO_MIN_SECONDS = 22.0
 VIDEO_MAX_SECONDS = 35.0
@@ -195,15 +196,43 @@ def _reusable_license(extmetadata):
 def get_media_candidates(latin, common_name):
     candidates = []
     seen_urls = set()
+    latin_tokens = {x for x in re.findall(r"[a-z0-9]+", latin.lower()) if len(x) >= 3}
+    common_tokens = {x for x in re.findall(r"[a-z0-9]+", common_name.lower()) if len(x) >= 3}
+    blocked_visual_terms = {
+        "map", "range", "distribution", "illustration", "plate", "diagram",
+        "footprint", "footprints", "track", "tracks", "scat", "feces",
+        "skull", "skeleton", "bone", "museum", "specimen", "taxidermy"
+    }
+
+    def relevance_score(meta):
+        text = " ".join(str(meta.get(key, "")) for key in (
+            "title", "description", "species_guess", "taxon_name"
+        )).lower()
+        if any(term in text for term in blocked_visual_terms):
+            return -100
+        score = 0
+        if latin.lower() in text:
+            score += 100
+        if common_name.lower() in text:
+            score += 80
+        text_tokens = set(re.findall(r"[a-z0-9]+", text))
+        score += 15 * len(latin_tokens.intersection(text_tokens))
+        score += 10 * len(common_tokens.intersection(text_tokens))
+        return score
 
     def add(url, kind, source, meta=None):
         if not url or url in seen_urls:
             return
+        meta = dict(meta or {})
         lower = url.lower()
-        if any(token in lower for token in [".svg", "map", "range", "distribution", "illustration", "plate"]):
+        url_text = lower.replace("_", " ")
+        if any(token in url_text for token in blocked_visual_terms) or ".svg" in lower:
+            return
+        meta["relevance"] = relevance_score(meta)
+        if meta["relevance"] < 0:
             return
         seen_urls.add(url)
-        candidates.append({"url": url, "kind": kind, "source": source, **(meta or {})})
+        candidates.append({"url": url, "kind": kind, "source": source, **meta})
 
     try:
         data = wiki_json(
@@ -233,7 +262,8 @@ def get_media_candidates(latin, common_name):
                 "GET", "https://api.inaturalist.org/v1/observations",
                 params={
                     "taxon_name": latin, "has[]": "photos", "quality_grade": "research",
-                    "per_page": 50, "page": page,
+                    "order_by": "votes", "order": "desc",
+                    "per_page": 100, "page": page,
                 }, timeout=20,
             )
             results = data.get("results", [])
@@ -246,6 +276,10 @@ def get_media_candidates(latin, common_name):
                     add(url, "photo", "iNaturalist", {
                         "license": license_code or "license-not-returned",
                         "observation_id": obs.get("id"),
+                        "description": obs.get("description") or "",
+                        "species_guess": obs.get("species_guess") or "",
+                        "taxon_name": ((obs.get("taxon") or {}).get("name") or ""),
+                        "votes": obs.get("votes") or 0,
                     })
             if not results:
                 break
@@ -329,6 +363,18 @@ def download_species_media(latin, common_name):
         metadata.append({**candidate, "path": path, "phash": str(visual_hash) if visual_hash else None})
         return True
 
+    # Rank evidence before downloading: high-vote iNaturalist observations and
+    # species-specific Wikimedia titles are preferred over generic search hits.
+    candidates.sort(
+        key=lambda x: (
+            x.get("relevance", 0),
+            x.get("votes", 0),
+            1 if x["source"] == "iNaturalist" else 0,
+        ),
+        reverse=True,
+    )
+
+    subject_relevant_count = 0
     for candidate in candidates:
         if candidate["kind"] != "video" or sum(x["kind"] == "video" for x in saved) >= 2:
             continue
@@ -349,7 +395,11 @@ def download_species_media(latin, common_name):
                 os.remove(path)
                 continue
             if accept_candidate(candidate, data, path):
-                print(f"Footage unik diterima: {len(saved)} | {candidate['source']} | {candidate.get('title', '')}")
+                subject_relevant_count += 1
+                print(
+                    f"Footage unik diterima: {len(saved)} | {candidate['source']} | "
+                    f"relevance={candidate.get('relevance', 0)} | {candidate.get('title', '')}"
+                )
         except Exception as exc:
             print(f"Footage ditolak: {candidate['url']} ({exc})")
 
@@ -370,7 +420,11 @@ def download_species_media(latin, common_name):
                 os.remove(path)
                 continue
             if accept_candidate(candidate, data, path):
-                print(f"Foto unik diterima: {len(saved)} | {candidate['source']}")
+                subject_relevant_count += 1
+                print(
+                    f"Foto unik diterima: {len(saved)} | {candidate['source']} | "
+                    f"relevance={candidate.get('relevance', 0)} | votes={candidate.get('votes', 0)}"
+                )
         except Exception as exc:
             print(f"Foto ditolak: {candidate['url']} ({exc})")
 
@@ -380,15 +434,32 @@ def download_species_media(latin, common_name):
             f"minimum {MIN_UNIQUE_PHOTOS}. Tidak akan mengulang media yang sama."
         )
 
-    # Story order: lead with motion when available, then alternate remaining media.
+    if subject_relevant_count < MIN_SUBJECT_MEDIA:
+        raise RuntimeError(
+            f"Media gagal relevance gate untuk {latin}: hanya {subject_relevant_count}/"
+            f"{MIN_SUBJECT_MEDIA} media lolos evidence ranking. "
+            f"Video tidak akan dipaksakan dengan footage lemah/tidak relevan."
+        )
+
+    # Story order: strongest evidence first, then motion, then remaining views.
+    by_path = {x["path"]: x for x in metadata}
     videos = [x for x in saved if x["kind"] == "video"]
     photos = [x for x in saved if x["kind"] == "photo"]
-    random.shuffle(videos)
-    random.shuffle(photos)
+    videos.sort(key=lambda x: by_path.get(x["path"], {}).get("relevance", 0), reverse=True)
+    photos.sort(
+        key=lambda x: (
+            by_path.get(x["path"], {}).get("relevance", 0),
+            by_path.get(x["path"], {}).get("votes", 0),
+        ),
+        reverse=True,
+    )
     saved = (videos[:1] + photos + videos[1:])[:MAX_PHOTOS]
 
     with open(os.path.join(BASE_DIR, "media_sources.json"), "w", encoding="utf-8") as f:
-        json.dump(metadata, f, ensure_ascii=False, indent=2)
+        json.dump(
+            [by_path.get(x["path"], x) for x in saved],
+            f, ensure_ascii=False, indent=2
+        )
     return saved
 
 
