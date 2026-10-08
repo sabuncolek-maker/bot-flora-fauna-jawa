@@ -1,13 +1,13 @@
 # Bot Flora Fauna Jawa 🌿🐾
 
-Bot otomatis yang membuat dan memposting konten edukasi tentang flora & fauna Pulau Jawa ke **Instagram**, **Facebook**, dan **Telegram**. Berjalan sendiri 100% lewat GitHub Actions — tanpa perlu disentuh.
+Bot otomatis untuk membuat dan memposting konten edukasi flora & fauna Pulau Jawa ke **Instagram**, **Facebook**, dan **Telegram**. Pipeline Reels saat ini dijalankan manual melalui GitHub Actions sampai tahap dry-run dan QA dinyatakan stabil.
 
 ## 📦 Jenis Konten
 
 | Konten | Format | Jadwal |
 |--------|--------|--------|
 | 🖼️ Infografis | Gambar 1080×1080 (foto besar + fakta) | 3x sehari |
-| 🎬 Reels | Video vertikal ±30 detik (narasi Inggris + subtitle) | 3x sehari (23:37, 02:43, 05:21 WIB) |
+| 🎬 Reels | Video vertikal 22–35 detik (narasi Inggris + subtitle) | Manual / dry-run; production OFF |
 | 🔄 Mitos vs Fakta | Carousel 4 slide (cover → mitos → fakta → penutup) | Rabu & Sabtu, 10:17 WIB |
 
 ## ⚙️ Cara Kerja
@@ -16,10 +16,10 @@ Bot otomatis yang membuat dan memposting konten edukasi tentang flora & fauna Pu
 2. **Ambil foto** — Foto berlisensi terbuka (CC0/CC-BY) dari iNaturalist & Wikimedia Commons. Aman dari masalah hak cipta.
 3. **Buat konten** —
    - Infografis: template HTML di-render jadi gambar via Playwright
-   - Reels: 6 foto digabung jadi video via FFmpeg (background blur, zoom halus, transisi fade, musik latar, subtitle)
+   - Reels: 4–6 media spesifik spesies digabung via FFmpeg (background blur, zoom, subtitle, validasi visual pHash, dan QA durasi)
    - Carousel: 4 slide HTML di-render jadi gambar
 4. **Posting otomatis** — Ke Instagram, Facebook Page, dan notifikasi Telegram via Meta Graph API.
-5. **Catat riwayat** — Spesies yang sudah diposting dicatat agar tidak duplikat. History hanya dicatat kalau posting **berhasil**.
+5. **Catat riwayat** — Spesies yang berhasil diposting dicatat agar tidak duplikat. History tidak diperbarui pada dry-run.
 
 ## 📂 Struktur Folder
 
@@ -61,5 +61,7 @@ Buka tab **Actions** di GitHub → pilih workflow → **Run workflow** → **Run
 
 ## 📝 Catatan
 
-- Jadwal pakai zona waktu UTC di file workflow (WIB = UTC+7).
+- Reels saat ini tidak memiliki schedule otomatis; gunakan `workflow_dispatch` untuk `disabled`, `dry_run`, atau `production`.
+- Production tetap OFF sampai pipeline lolos review visual.
+- Runtime media/audio/subtitle dibersihkan setelah setiap run agar tidak menjadi sampah repository.
 - Jangan push ke `main` saat workflow sedang berjalan — bisa bikin push riwayat ditolak. Workflow sudah dilengkapi `git pull --rebase` sebagai pengaman.
