@@ -165,10 +165,16 @@ def _reusable_license(extmetadata):
         str((extmetadata.get("LicenseShortName") or {}).get("value", "")),
         str((extmetadata.get("UsageTerms") or {}).get("value", "")),
     ]).lower()
-    return any(x in raw for x in ["cc0", "cc by", "cc-by", "public domain"])
+    if "public domain" in raw or "cc0" in raw:
+        return True
+    # Explicitly reject NC/ND licenses. They are not suitable as a generic
+    # automated publishing source.
+    if re.search(r"\bcc[- ]?by[- ]?(nc|nd)\b", raw):
+        return False
+    return bool(re.search(r"\bcc[- ]?by(?:[- ]?sa)?(?:\s|[- ]|$)", raw))
 
 
-def get_media_candidates(latin):
+def get_media_candidates(latin, common_name):
     candidates = []
     seen_urls = set()
 
@@ -185,7 +191,7 @@ def get_media_candidates(latin):
         data = http_json(
             "GET", "https://commons.wikimedia.org/w/api.php",
             params={
-                "action": "query", "generator": "search", "gsrsearch": latin,
+                "action": "query", "generator": "search", "gsrsearch": f'"{latin}" OR "{common_name}"',
                 "gsrnamespace": 6, "gsrlimit": 100,
                 "prop": "imageinfo", "iiprop": "url|mime|extmetadata",
                 "format": "json", "formatversion": 2,
@@ -266,8 +272,8 @@ def get_media_candidates(latin):
     return candidates
 
 
-def download_species_media(latin):
-    candidates = get_media_candidates(latin)
+def download_species_media(latin, common_name):
+    candidates = get_media_candidates(latin, common_name)
     saved = []
     hashes = set()
     metadata = []
@@ -745,7 +751,7 @@ def main():
     content_format = choose_content_format(item)
     print(f"Target: {item['latin']} / {item['indonesia']} | format={content_format}")
 
-    media = download_species_media(item["latin"])
+    media = download_species_media(item["latin"], item["indonesia"])
     hook = generate_english_hook(item, content_format)
     script = generate_english_script(item, content_format)
     segments = segment_script(script)
