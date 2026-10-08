@@ -2,6 +2,12 @@ name: Generate & Post Reels 30 Detik
 
 on:
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Mode test (true = bikin video saja, tidak posting)'
+        required: false
+        default: false
+        type: boolean
   schedule:
     # 23:37 WIB (16:37 UTC)
     - cron: '37 16 * * *'
@@ -41,11 +47,20 @@ jobs:
           FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           cd post_reels
           python generate_reels.py
 
+      - name: Upload Video Hasil Dry Run
+        if: inputs.dry_run == true
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-dry-run
+          path: post_reels/reels_final.mp4
+
       - name: Simpan Catatan Riwayat ke Repositori
+        if: inputs.dry_run != true
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
