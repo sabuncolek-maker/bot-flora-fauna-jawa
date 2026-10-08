@@ -782,11 +782,20 @@ def apply_vision_editor(media_items, latin, common_name):
             videos = [x for x in selected if x["kind"] == "video"]
             if len(photos) >= MIN_STORY_PHOTOS:
                 break
+            if final_duplicate(replacement):
+                continue
+            try:
+                replacement_profile = _profile_from_file(replacement["path"])
+            except Exception:
+                continue
             if videos:
                 selected = photos + [replacement] + videos[:1]
             else:
                 selected.append(replacement)
             selected = selected[:MAX_PHOTOS]
+            selected_profiles.append(replacement_profile)
+            if replacement.get("sha256"):
+                selected_hashes.add(replacement["sha256"])
 
     if sum(x["kind"] == "photo" for x in selected) < MIN_STORY_PHOTOS:
         raise RuntimeError(
