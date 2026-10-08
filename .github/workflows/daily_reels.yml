@@ -57,7 +57,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: video-dry-run
-          path: post_reels/reels_final.mp4
+          path: post_reels/reels_30detik.mp4
 
       - name: Simpan Catatan Riwayat ke Repositori
         if: inputs.dry_run != true
