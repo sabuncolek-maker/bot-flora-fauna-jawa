@@ -39,7 +39,10 @@ MIN_VIDEO_SCENE_DISTANCE = 0.08
 MAX_MEDIA_CANDIDATES_TO_SCORE = 30
 VISION_MODEL = "qwen/qwen3.8-27b"
 VISION_POOL_SIZE = 9
+VISION_BATCH_SIZE = 3
 VISION_MIN_SUBJECT_CONFIDENCE = 0.75
+VISION_BATCH_INTERVAL_SECONDS = 61
+VISION_MAX_RETRIES = 3
 VISION_MIN_STORY_VALUE = 55
 VIDEO_MIN_SECONDS = 22.0
 VIDEO_MAX_SECONDS = 35.0
@@ -350,7 +353,7 @@ def _image_visual_profile(image):
     phash = imagehash.phash(image)
     dhash = imagehash.dhash(image)
     gray = image.convert("L").resize((32, 32))
-    pixels = list(gray.getdata())
+    pixels = list(gray.get_flattened_data())
     return {
         "phash": phash,
         "dhash": dhash,
@@ -541,13 +544,13 @@ def _vision_analyze_batch(batch, latin, common_name):
             "image_url": {"url": _vision_encode_image(item["path"], item["kind"])}
         })
 
-    response = client.chat.completions.create(
-        model=VISION_MODEL,
-        messages=[{"role": "user", "content": content}],
-        temperature=0.1,
-        max_completion_tokens=1200,
-        reasoning_effort="none",
-        response_format={
+    request_kwargs = {
+        "model": VISION_MODEL,
+        "messages": [{"role": "user", "content": content}],
+        "temperature": 0.1,
+        "max_completion_tokens": 1200,
+        "reasoning_effort": "none",
+        "response_format": {
             "type": "json_schema",
             "json_schema": {
                 "name": "visual_editor_batch",
@@ -589,7 +592,34 @@ def _vision_analyze_batch(batch, latin, common_name):
                 }
             }
         }
-    )
+    }
+
+    last_error = None
+    for attempt in range(VISION_MAX_RETRIES):
+        try:
+            response = client.chat.completions.create(**request_kwargs)
+            break
+        except Exception as exc:
+            last_error = exc
+            status_code = getattr(exc, "status_code", None)
+            if status_code == 429:
+                delay = 61
+            elif status_code in {408, 425, 500, 502, 503, 504}:
+                delay = 2 ** attempt + random.random()
+            else:
+                raise
+            if attempt >= VISION_MAX_RETRIES - 1:
+                raise RuntimeError(
+                    f"Groq Vision gagal setelah {VISION_MAX_RETRIES} percobaan "
+                    f"(status={status_code}): {exc}"
+                ) from exc
+            print(
+                f"Groq Vision retry {attempt + 1}/{VISION_MAX_RETRIES} "
+                f"setelah status={status_code}; tunggu {delay:.0f}s."
+            )
+            time.sleep(delay)
+    else:
+        raise RuntimeError(f"Groq Vision gagal: {last_error}") from last_error
 
     payload = json.loads(response.choices[0].message.content or "{}")
     results = payload.get("results") or []
@@ -605,8 +635,14 @@ def apply_vision_editor(media_items, latin, common_name):
     if not GROQ_KEY:
         raise RuntimeError("GROQ_API_KEY diperlukan untuk Visual Editor.")
 
-    for start in range(0, len(media_items), 3):
-        batch = media_items[start:start + 3]
+    for batch_index, start in enumerate(range(0, len(media_items), VISION_BATCH_SIZE)):
+        if batch_index:
+            print(
+                f"Vision rate-limit guard: waiting {VISION_BATCH_INTERVAL_SECONDS}s "
+                f"before batch {batch_index + 1}."
+            )
+            time.sleep(VISION_BATCH_INTERVAL_SECONDS)
+        batch = media_items[start:start + VISION_BATCH_SIZE]
         results = _vision_analyze_batch(batch, latin, common_name)
         for item, result in zip(batch, results):
             item["vision"] = result
