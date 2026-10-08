@@ -23,7 +23,7 @@ concurrency:
 jobs:
   build-and-post-reels:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Checkout Repository
@@ -41,6 +41,12 @@ jobs:
 
       - name: Install Dependencies
         run: pip install -r requirements.txt
+
+      - name: Validate Reels Code
+        run: |
+          python -m py_compile post_reels/generate_reels.py
+          python -m json.tool post_reels/spesies_bintang.json > /dev/null
+          python -m json.tool post_reels/history_reels.json > /dev/null
 
       - name: Run Reels Pipeline
         env:
