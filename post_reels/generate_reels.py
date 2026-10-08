@@ -7,6 +7,7 @@ import asyncio
 import subprocess
 import hashlib
 import tempfile
+import base64
 from datetime import datetime, timezone
 
 import requests
@@ -36,6 +37,10 @@ PHASH_MAX_DISTANCE = 8
 MIN_PIXEL_DISTANCE = 0.075
 MIN_VIDEO_SCENE_DISTANCE = 0.08
 MAX_MEDIA_CANDIDATES_TO_SCORE = 30
+VISION_MODEL = "qwen/qwen3.8-27b"
+VISION_POOL_SIZE = 9
+VISION_MIN_SUBJECT_CONFIDENCE = 0.75
+VISION_MIN_STORY_VALUE = 55
 VIDEO_MIN_SECONDS = 22.0
 VIDEO_MAX_SECONDS = 35.0
 FB_API = "https://graph.facebook.com/v21.0"
@@ -459,6 +464,232 @@ def _story_novelty_score(representative, accepted_profiles):
     )
 
 
+def _vision_encode_image(path, kind):
+    """Encode a local photo or a video contact sheet for Groq Vision."""
+    if kind == "photo":
+        with Image.open(path) as image:
+            image = image.convert("RGB")
+            image.thumbnail((1280, 1280))
+            with tempfile.NamedTemporaryFile(suffix=".jpg") as tmp:
+                image.save(tmp.name, "JPEG", quality=82, optimize=True)
+                payload = base64.b64encode(open(tmp.name, "rb").read()).decode("utf-8")
+        return f"data:image/jpeg;base64,{payload}"
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        frame_paths = []
+        for index, position in enumerate(("0.15", "0.50", "0.85")):
+            frame_path = os.path.join(tmpdir, f"frame_{index}.jpg")
+            probe = subprocess.run(
+                [
+                    "ffmpeg", "-y", "-ss", position, "-i", path,
+                    "-frames:v", "1", "-vf", "scale=480:-2",
+                    "-q:v", "4", frame_path
+                ],
+                capture_output=True, timeout=20
+            )
+            if probe.returncode == 0 and os.path.exists(frame_path):
+                frame_paths.append(frame_path)
+
+        if not frame_paths:
+            raise RuntimeError("Video tidak menghasilkan frame untuk Vision.")
+
+        frames = []
+        for frame_path in frame_paths:
+            with Image.open(frame_path) as image:
+                frames.append(image.convert("RGB"))
+
+        width = 480 * len(frames)
+        height = max(image.height for image in frames)
+        sheet = Image.new("RGB", (width, height), "white")
+        x = 0
+        for image in frames:
+            sheet.paste(image, (x, 0))
+            x += image.width
+
+        with tempfile.NamedTemporaryFile(suffix=".jpg") as tmp:
+            sheet.save(tmp.name, "JPEG", quality=82, optimize=True)
+            payload = base64.b64encode(open(tmp.name, "rb").read()).decode("utf-8")
+        return f"data:image/jpeg;base64,{payload}"
+
+
+def _vision_analyze_batch(batch, latin, common_name):
+    client = Groq(api_key=GROQ_KEY)
+    content = [{
+        "type": "text",
+        "text": (
+            f"You are the visual editor for a wildlife Reel about {common_name} "
+            f"({latin}). Inspect each image independently. Do not trust filenames or "
+            f"metadata as proof that the subject is visible. Reject images showing only "
+            f"tracks, footprints, habitat, maps, diagrams, specimens, objects, or scenery "
+            f"when the species itself is not clearly visible. For videos, each image is a "
+            f"contact sheet sampled from the same video. Evaluate visible subject clarity, "
+            f"shot type, composition, story value, and whether it adds a genuinely different "
+            f"visual beat. Return one result per image in the same order. "
+            f"Use confidence values from 0 to 1 and scores from 0 to 100."
+        )
+    }]
+
+    for index, item in enumerate(batch, 1):
+        content.append({
+            "type": "text",
+            "text": f"IMAGE {index}: {item['kind']} | source={item.get('source', '')}"
+        })
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": _vision_encode_image(item["path"], item["kind"])}
+        })
+
+    response = client.chat.completions.create(
+        model=VISION_MODEL,
+        messages=[{"role": "user", "content": content}],
+        temperature=0.1,
+        max_completion_tokens=1200,
+        reasoning_effort="none",
+        response_format={
+            "type": "json_schema",
+            "json_schema": {
+                "name": "visual_editor_batch",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "results": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "subject_visible": {"type": "boolean"},
+                                    "subject_confidence": {"type": "number"},
+                                    "shot_type": {
+                                        "type": "string",
+                                        "enum": ["close_up", "medium", "wide", "detail", "unknown"]
+                                    },
+                                    "composition": {
+                                        "type": "string",
+                                        "enum": ["subject_dominant", "balanced", "background_dominant", "unknown"]
+                                    },
+                                    "story_value": {"type": "number"},
+                                    "visual_quality": {"type": "number"},
+                                    "behavior": {"type": "string"},
+                                    "reject_reason": {"type": "string"},
+                                },
+                                "required": [
+                                    "subject_visible", "subject_confidence", "shot_type",
+                                    "composition", "story_value", "visual_quality",
+                                    "behavior", "reject_reason"
+                                ],
+                                "additionalProperties": False,
+                            }
+                        }
+                    },
+                    "required": ["results"],
+                    "additionalProperties": False,
+                }
+            }
+        }
+    )
+
+    payload = json.loads(response.choices[0].message.content or "{}")
+    results = payload.get("results") or []
+    if len(results) != len(batch):
+        raise RuntimeError(
+            f"Vision mengembalikan {len(results)} hasil untuk {len(batch)} gambar."
+        )
+    return results
+
+
+def apply_vision_editor(media_items, latin, common_name):
+    """Use Groq Vision as the final semantic gate and visual-story scorer."""
+    if not GROQ_KEY:
+        raise RuntimeError("GROQ_API_KEY diperlukan untuk Visual Editor.")
+
+    for start in range(0, len(media_items), 3):
+        batch = media_items[start:start + 3]
+        results = _vision_analyze_batch(batch, latin, common_name)
+        for item, result in zip(batch, results):
+            item["vision"] = result
+
+    approved = []
+    for item in media_items:
+        vision = item.get("vision") or {}
+        confidence = float(vision.get("subject_confidence", 0))
+        story_value = float(vision.get("story_value", 0))
+        visible = bool(vision.get("subject_visible"))
+        if not visible or confidence < VISION_MIN_SUBJECT_CONFIDENCE:
+            print(
+                f"Vision reject: subject_visible={visible} confidence={confidence:.2f} | "
+                f"{item.get('source')} | {item.get('path')}"
+            )
+            continue
+        if story_value < VISION_MIN_STORY_VALUE:
+            print(
+                f"Vision reject: story_value={story_value:.1f} | "
+                f"{item.get('source')} | {item.get('path')}"
+            )
+            continue
+
+        item["vision_score"] = round(
+            confidence * 45.0
+            + story_value * 0.35
+            + float(vision.get("visual_quality", 0)) * 0.20,
+            2,
+        )
+        approved.append(item)
+
+    if len(approved) < MIN_STORY_MEDIA:
+        raise RuntimeError(
+            f"Vision story gate gagal: hanya {len(approved)}/{MIN_STORY_MEDIA} "
+            f"media lolos semantic visual verification untuk {latin}."
+        )
+
+    # Select a diverse sequence using Vision's semantic shot/composition labels.
+    selected = []
+    used_shot_types = set()
+    for item in sorted(
+        approved,
+        key=lambda x: (
+            x.get("vision_score", 0),
+            x.get("visual_novelty", 0),
+            x.get("relevance", 0),
+        ),
+        reverse=True,
+    ):
+        shot_type = (item.get("vision") or {}).get("shot_type", "unknown")
+        diversity_bonus = 1 if shot_type not in used_shot_types else 0
+        item["_selection_score"] = item.get("vision_score", 0) + diversity_bonus * 8
+        selected.append(item)
+        used_shot_types.add(shot_type)
+
+    selected.sort(
+        key=lambda x: (
+            x.get("_selection_score", 0),
+            x.get("visual_novelty", 0),
+            x.get("relevance", 0),
+        ),
+        reverse=True,
+    )
+    selected = selected[:MAX_PHOTOS]
+
+    if sum(x["kind"] == "photo" for x in selected) < MIN_STORY_PHOTOS:
+        photo_candidates = [x for x in approved if x["kind"] == "photo" and x not in selected]
+        photo_candidates.sort(key=lambda x: x.get("vision_score", 0), reverse=True)
+        for replacement in photo_candidates:
+            video_items = [x for x in selected if x["kind"] == "video"]
+            photos = [x for x in selected if x["kind"] == "photo"]
+            if len(photos) >= MIN_STORY_PHOTOS:
+                break
+            if video_items:
+                selected = photos[:MIN_STORY_PHOTOS] + video_items[:1]
+            else:
+                selected.append(replacement)
+            selected = selected[:MAX_PHOTOS]
+
+    for item in selected:
+        item.pop("_selection_score", None)
+
+    return selected
+
+
 def download_species_media(latin, common_name):
     candidates = get_media_candidates(latin, common_name)
     saved = []
@@ -522,8 +753,6 @@ def download_species_media(latin, common_name):
     subject_relevant_count = 0
     photo_count = 0
 
-    # Download only the highest evidence candidates first, but keep scanning
-    # deeper candidates so repeated compositions do not exhaust the story.
     for candidate in candidates[:MAX_MEDIA_CANDIDATES_TO_SCORE]:
         if candidate.get("relevance", 0) < MIN_RELEVANCE_SCORE:
             continue
@@ -564,7 +793,7 @@ def download_species_media(latin, common_name):
     for candidate in candidates[:MAX_MEDIA_CANDIDATES_TO_SCORE]:
         if candidate.get("relevance", 0) < MIN_RELEVANCE_SCORE:
             continue
-        if candidate["kind"] != "photo" or len(saved) >= MAX_PHOTOS:
+        if candidate["kind"] != "photo" or len(saved) >= VISION_POOL_SIZE:
             continue
         try:
             data = http_bytes(candidate["url"])
@@ -614,19 +843,31 @@ def download_species_media(latin, common_name):
         )
 
     by_path = {x["path"]: x for x in metadata}
+    vision_items = [by_path[x["path"]] for x in saved]
+    selected_metadata = apply_vision_editor(vision_items, latin, common_name)
 
-    # Story sequence: strongest subject evidence first, then visual novelty.
-    ranked = sorted(
-        saved,
+    selected_paths = {x["path"] for x in selected_metadata}
+    for item in saved:
+        if item["path"] not in selected_paths and os.path.exists(item["path"]):
+            os.remove(item["path"])
+
+    selected = [
+        {"path": item["path"], "kind": item["kind"]}
+        for item in selected_metadata
+    ]
+
+    # Story sequence: Vision score first, then semantic shot diversity.
+    selected.sort(
         key=lambda x: (
+            by_path.get(x["path"], {}).get("vision_score", 0),
             by_path.get(x["path"], {}).get("visual_novelty", 0),
-            by_path.get(x["path"], {}).get("visual_quality", 0),
             by_path.get(x["path"], {}).get("relevance", 0),
         ),
         reverse=True,
     )
-    videos = [x for x in ranked if x["kind"] == "video"]
-    photos = [x for x in ranked if x["kind"] == "photo"]
+
+    photos = [x for x in selected if x["kind"] == "photo"]
+    videos = [x for x in selected if x["kind"] == "video"]
     saved = (photos[:3] + videos[:1] + photos[3:])[:MAX_PHOTOS]
 
     with open(os.path.join(BASE_DIR, "media_sources.json"), "w", encoding="utf-8") as f:
@@ -636,9 +877,10 @@ def download_species_media(latin, common_name):
         )
 
     print(
-        f"Story media QA OK: {len(saved)} visual berbeda; "
+        f"Vision story QA OK: {len(saved)} visual; "
         f"photos={sum(x['kind'] == 'photo' for x in saved)}; "
-        f"videos={sum(x['kind'] == 'video' for x in saved)}"
+        f"videos={sum(x['kind'] == 'video' for x in saved)}; "
+        f"vision_model={VISION_MODEL}"
     )
     return saved
 
