@@ -35,7 +35,9 @@ MIN_SUBJECT_MEDIA = 4
 MIN_RELEVANCE_SCORE = 50
 PHASH_MAX_DISTANCE = 8
 MIN_PIXEL_DISTANCE = 0.075
-VISUAL_DUPLICATE_SIGNALS_REQUIRED = 2
+HARD_DUPLICATE_PHASH_DISTANCE = 4
+HARD_DUPLICATE_DHASH_DISTANCE = 4
+HARD_DUPLICATE_PIXEL_DISTANCE = 0.025
 MIN_VIDEO_SCENE_DISTANCE = 0.08
 MAX_MEDIA_CANDIDATES_TO_SCORE = 30
 VISION_MODEL = "qwen/qwen3.8-27b"
@@ -425,19 +427,23 @@ def video_scene_diversity(profiles):
 
 
 def is_visually_duplicate(candidate_profile, accepted_profiles):
-    """Reject only when multiple independent visual signals agree on duplication."""
+    """Reject only obvious near-identical media before semantic Vision review."""
     if candidate_profile is None:
         return False
 
     for accepted in accepted_profiles:
         distance = _visual_distance(candidate_profile, accepted)
-        signals = (
-            distance["phash"] <= PHASH_MAX_DISTANCE,
-            distance["dhash"] <= PHASH_MAX_DISTANCE,
-            distance["pixels"] <= MIN_PIXEL_DISTANCE,
+
+        # Classical CV is only an anti-duplicate filter here.
+        # Similar-but-editorially-distinct shots must reach Groq Vision.
+        hard_duplicate = (
+            distance["phash"] <= HARD_DUPLICATE_PHASH_DISTANCE
+            and distance["dhash"] <= HARD_DUPLICATE_DHASH_DISTANCE
+            and distance["pixels"] <= HARD_DUPLICATE_PIXEL_DISTANCE
         )
-        if sum(signals) >= VISUAL_DUPLICATE_SIGNALS_REQUIRED:
+        if hard_duplicate:
             return True
+
     return False
 
 
