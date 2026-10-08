@@ -253,8 +253,7 @@ def get_media_candidates(latin, common_name):
         print(f"iNaturalist gagal: {exc}")
 
     try:
-        data = http_json(
-            "GET", "https://commons.wikimedia.org/w/api.php",
+        data = wiki_json(
             params={
                 "action": "query", "generator": "search", "gsrsearch": latin,
                 "gsrnamespace": 6, "gsrlimit": 100,
