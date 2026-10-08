@@ -211,7 +211,7 @@ def generate_naskah_indonesia(scientific_name, nama_indonesia=""):
     ATURAN KERAS akurasi: DILARANG menyebut habitat atau latar spesifik yang tidak terverifikasi
     (jangan tulis "hutan lebat", "lereng berkabut", "kanopi hutan", "rawa", "puncak gunung" atau sejenisnya).
     Fokus hanya pada: apa spesiesnya, fakta uniknya, perilakunya, dan kenapa ia istimewa.
-    Kembalikan HANYA teks narasi. Tanpa markdown, tanpa judul, tanpa nomor.
+    Kembalikan HANYA teks narasi. Tanpa markdown, tanpa judul, tanpa nomor, TANPA URL/link apapun.
     """
     completion = client.chat.completions.create(
         model="openai/gpt-oss-120b",
@@ -379,7 +379,13 @@ async def create_audio_and_clean_subtitles(text):
         return re.sub(r'[^a-zA-Z0-9]', '', w).lower()
 
     teks_tts = re.sub(r'\*([^*]+)\*', r'\1', '\n'.join(' '.join(s) for s in segmen_list))
+    # BERSIHKAN untuk TTS: buang URL, markdown, karakter aneh agar tidak dibaca aneh
+    teks_tts = re.sub(r'https?://\S+', '', teks_tts)  # buang URL
+    teks_tts = re.sub(r'www\.\S+', '', teks_tts)  # buang www.
+    teks_tts = re.sub(r'[#*_`~|]', '', teks_tts)  # buang markdown
+    teks_tts = re.sub(r'\s+', ' ', teks_tts).strip()  # rapikan spasi
     teks_tts = teks_tts.capitalize()
+    print(f"Teks untuk TTS (bersih): {teks_tts[:150]}...")
 
     # Kata per segmen (bersih, untuk pemetaan ke WordBoundary)
     kata_per_segmen = []
