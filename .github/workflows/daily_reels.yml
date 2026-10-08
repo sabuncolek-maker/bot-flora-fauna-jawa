@@ -6,7 +6,7 @@ on:
       mode:
         description: "disabled = OFF, dry_run = render + Telegram review, production = publish"
         required: true
-        default: disabled
+        default: "disabled"
         type: choice
         options:
           - disabled
@@ -24,34 +24,44 @@ jobs:
   build-and-post-reels:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
       - name: Install FFmpeg
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
+
       - name: Install Dependencies
         run: pip install -r requirements.txt
+
       - name: Run Reels Pipeline
         env:
-          GROQ_API_KEY: \${{ secrets.GROQ_API_KEY }}
-          FB_PAGE_ACCESS_TOKEN: \${{ secrets.FB_PAGE_ACCESS_TOKEN }}
-          FB_PAGE_ID: \${{ secrets.FB_PAGE_ID }}
-          TELEGRAM_BOT_TOKEN: \${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: \${{ secrets.TELEGRAM_CHAT_ID }}
-          POST_MODE: \${{ inputs.mode }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          FB_PAGE_ACCESS_TOKEN: ${{ secrets.FB_PAGE_ACCESS_TOKEN }}
+          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          POST_MODE: ${{ inputs.mode }}
         run: |
           cd post_reels
           python generate_reels.py
+
       - name: Save Reels History
-        if: inputs.mode == 'production'
+        if: ${{ inputs.mode == 'production' }}
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add post_reels/history_reels.json
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Update reels publishing state [skip ci]" && git pull --rebase origin main && git push)
+          if ! git diff --cached --quiet; then
+            git commit -m "Update reels publishing state [skip ci]"
+            git pull --rebase origin main
+            git push
+          fi
