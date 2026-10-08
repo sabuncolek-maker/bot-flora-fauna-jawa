@@ -10,11 +10,16 @@ on:
     # Jam 19:42 WIB (12:42 UTC)
     - cron: '42 12 * * *'
 
+concurrency:
+  group: flora-fauna-infografis
+  cancel-in-progress: false
+
 jobs:
   run-bot:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: read
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
