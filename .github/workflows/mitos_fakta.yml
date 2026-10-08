@@ -5,6 +5,10 @@ on:
    - cron: '17 3 * * 3,6'  # Rabu & Sabtu jam 10:00 WIB
   workflow_dispatch:  # Tombol "Run workflow" untuk tes manual
 
+concurrency:
+  group: flora-fauna-mitos
+  cancel-in-progress: false
+
 jobs:
   mitos-fakta:
     runs-on: ubuntu-latest
