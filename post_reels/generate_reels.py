@@ -199,8 +199,21 @@ def generate_naskah_indonesia(scientific_name, nama_indonesia=""):
     {fakta_panduan}
     Gaya: dokumenter alam yang santai dan ramah, seperti bercerita ke teman. Jangan kaku seperti buku teks.
     ATURAN KERAS akurasi: DILARANG menyebut habitat atau latar spesifik yang tidak terverifikasi (jangan tulis "hutan lebat", "lereng berkabut", "kanopi hutan", "rawa", "puncak gunung" atau sejenisnya). Footage hanya foto biasa yang tidak menunjukkan habitat spesifik. Fokus hanya pada: apa spesiesnya, fakta uniknya, perilakunya, dan kenapa ia istimewa. Narasi harus tetap benar walau footage-nya hanya padang rumput biasa.
-    Panjang: tepat 4 kalimat berbeda, total 60-65 kata.
-    Format: kembalikan HANYA teks narasi Bahasa Indonesia. Tanpa markdown, tanpa judul.
+    FORMAT KHUSUS untuk subtitle modern: pecah narasi menjadi 5-6 SEGMEN pendek.
+    - Tiap segmen: maksimal 2 baris, tiap baris maksimal 4 kata
+    - Tulis HURUF KAPITAL semua
+    - Tandai kata kunci penting (angka, nama, sifat unik) dengan *bintang* di kedua sisinya
+    - Pisahkan tiap segmen dengan satu baris kosong
+    Contoh format yang benar:
+    BANGAU TONGTONG
+    ASLI *PULAU JAWA*
+
+    SETINGGI *SATU METER*
+    PARUH BESAR KUAT
+
+    *MAKAN BANGKAI*
+    JAGA ALAM BERSIH
+    Kembalikan HANYA teks narasi ter-segmentasi. Tanpa markdown, tanpa judul, tanpa nomor.
     """
     completion = client.chat.completions.create(
         model="openai/gpt-oss-120b",
@@ -258,37 +271,172 @@ def format_srt_time(seconds):
     return f"{hours:02d}:{mins:02d}:{secs:02d},{millis:03d}"
 
 async def create_audio_and_clean_subtitles(text):
+    """
+    Membuat audio TTS dan subtitle gaya modern (TikTok/Reels) yang SINKRON
+    dengan suara narator.
+
+    SINKRONISASI (wajib, bukan opsional):
+    - Audio di-generate via edge-tts stream() yang menghasilkan WordBoundary
+      (timestamp tiap kata dalam 100-nanosecond ticks)
+    - Tiap segmen subtitle dipetakan ke kata-katanya -> timing diambil dari
+      timestamp aktual narator, BUKAN tebakan proporsional
+    - Fallback berlapis jika WordBoundary tidak tersedia:
+      1) ukur durasi audio aktual via ffprobe, bagi proporsional per kata
+      2) terakhir: estimasi 26 detik (seperti sebelumnya)
+
+    Format input dari Groq: narasi ter-segmentasi, tiap segmen max 2 baris,
+    kata kunci ditandai *bintang*.
+    - TTS: teks bersih (tanpa *bintang*) agar dibaca natural
+    - SRT: *kata kunci* diubah jadi tag warna kuning ASS {\\c&H00D7FF&}
+    - Posisi subtitle: 58% dari atas layar (tidak menutupi hewan di tengah)
+    - Font subtitle (26) LEBIH KECIL dari hook (36) -> hierarki visual jelas
+    """
     voice = "id-ID-GadisNeural"  # Bahasa Indonesia, suara wanita yang tenang (permintaan Indra)
-    tts = edge_tts.Communicate(text, voice)
-    await tts.save(FILE_AUDIO)
 
-    kalimat_list = [k.strip() for k in re.split(r'(?<=[.!?])\s+', text) if k.strip()]
-    if not kalimat_list:
-        kalimat_list = [text]
+    # --- Parse segmen dari format Groq ---
+    text_bersih = re.sub(r'```[a-z]*\n?', '', text).replace('```', '').strip()
+    blok_mentah = [b.strip() for b in re.split(r'\n\s*\n', text_bersih) if b.strip()]
 
-    total_kata = sum(len(k.split()) for k in kalimat_list)
-    durasi_total = 28.0
-    waktu_mulai = 0.5
+    segmen_list = []
+    for blok in blok_mentah:
+        baris = [br.strip().upper() for br in blok.split('\n') if br.strip()]
+        if baris:
+            segmen_list.append(baris[:2])
+
+    if not segmen_list:
+        kalimat_list = [k.strip().upper() for k in re.split(r'(?<=[.!?])\s+', text_bersih) if k.strip()]
+        segmen_list = [[k] for k in kalimat_list] if kalimat_list else [[text_bersih.upper()]]
+
+    # --- Teks untuk TTS: hapus *bintang*, normalisasi kapitalisasi ---
+    def normalisasi_kata(w):
+        return re.sub(r'[^a-zA-Z0-9]', '', w).lower()
+
+    teks_tts = re.sub(r'\*([^*]+)\*', r'\1', '\n'.join(' '.join(s) for s in segmen_list))
+    teks_tts = teks_tts.capitalize()
+
+    # Kata per segmen (bersih, untuk pemetaan ke WordBoundary)
+    kata_per_segmen = []
+    for segmen in segmen_list:
+        kata = [normalisasi_kata(w) for w in ' '.join(segmen).replace('*', '').split()]
+        kata_per_segmen.append([k for k in kata if k])
+
+    # --- Generate audio via stream + kumpulkan WordBoundary ---
+    tts = edge_tts.Communicate(teks_tts, voice)
+    word_bounds = []  # [(kata_normalisasi, start_detik, end_detik)]
+    audio_chunks = []
+    try:
+        async for chunk in tts.stream():
+            if chunk["type"] == "audio":
+                audio_chunks.append(chunk["data"])
+            elif chunk["type"] == "WordBoundary":
+                # offset & duration dalam 100-nanosecond ticks -> detik
+                wb_start = chunk["offset"] / 10_000_000
+                wb_end = wb_start + (chunk["duration"] / 10_000_000)
+                wb_kata = normalisasi_kata(chunk.get("text", ""))
+                if wb_kata:
+                    word_bounds.append((wb_kata, wb_start, wb_end))
+        with open(FILE_AUDIO, "wb") as f_audio:
+            for ch in audio_chunks:
+                f_audio.write(ch)
+        print(f"TTS selesai: {len(word_bounds)} WordBoundary terkumpul")
+    except Exception as e:
+        print(f"Stream TTS gagal ({e}), fallback ke save biasa")
+        await edge_tts.Communicate(teks_tts, voice).save(FILE_AUDIO)
+        word_bounds = []
+
+    # --- Hitung timing tiap segmen ---
+    # Metode 1 (ideal): petakan kata segmen ke WordBoundary secara berurutan
+    segmen_timing = []  # [(start, end)]
+    if word_bounds:
+        idx_wb = 0
+        for kata_seg in kata_per_segmen:
+            t_start, t_end = None, None
+            for k in kata_seg:
+                # Cari kata yang cocok mulai dari posisi terakhir (berurutan)
+                found = False
+                for j in range(idx_wb, len(word_bounds)):
+                    if word_bounds[j][0] == k:
+                        if t_start is None:
+                            t_start = word_bounds[j][1]
+                        t_end = word_bounds[j][2]
+                        idx_wb = j + 1
+                        found = True
+                        break
+                if not found:
+                    # Kata tidak ketemu (beda tokenisasi) -> lewati, pakai estimasi
+                    break
+            if t_start is not None and t_end is not None:
+                segmen_timing.append((t_start, t_end))
+            else:
+                segmen_timing.append((None, None))
+        # Isi yang gagal dipetakan dengan interpolasi dari tetangga
+        for i in range(len(segmen_timing)):
+            if segmen_timing[i][0] is None:
+                # Cari tetangga terdekat yang valid
+                prev_end = 3.0
+                for j in range(i - 1, -1, -1):
+                    if segmen_timing[j][0] is not None:
+                        prev_end = segmen_timing[j][1]
+                        break
+                next_start = None
+                for j in range(i + 1, len(segmen_timing)):
+                    if segmen_timing[j][0] is not None:
+                        next_start = segmen_timing[j][0]
+                        break
+                if next_start is None:
+                    # Estimasi: 2 detik per segmen yang tersisa
+                    next_start = prev_end + 2.0
+                segmen_timing[i] = (prev_end, min(next_start, prev_end + 3.0))
+
+    # Metode 2 (fallback): ukur durasi audio aktual via ffprobe, bagi proporsional
+    if not segmen_timing or not word_bounds:
+        durasi_audio = 0
+        try:
+            r = subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=noprint_wrappers=1:nokey=1", FILE_AUDIO],
+                capture_output=True, text=True, timeout=10
+            )
+            durasi_audio = float(r.stdout.strip())
+            print(f"Durasi audio aktual (ffprobe): {durasi_audio:.1f}s")
+        except Exception as e:
+            print(f"ffprobe gagal ({e}), pakai estimasi 26s")
+            durasi_audio = 26.0
+        total_kata = sum(len(ks) for ks in kata_per_segmen) or 1
+        waktu_mulai = 3.0
+        segmen_timing = []
+        for kata_seg in kata_per_segmen:
+            dur = max(1.5, (len(kata_seg) / total_kata) * durasi_audio)
+            segmen_timing.append((waktu_mulai, waktu_mulai + dur))
+            waktu_mulai += dur
+
+    # --- Bangun SRT dengan tag warna kuning + timing sinkron ---
+    # Geser semua timing +3.0 detik agar mulai SETELAH hook text (hindari overlap).
+    # Tapi jangan melebihi durasi video (~30 detik).
+    OFFSET_HOOK = 3.0
+
+    def warnai_kuning(baris_teks):
+        # Pakai lambda: hindari masalah escape \1 di re.sub replacement string.
+        # Output: {\c&H00D7FF&}kata kunci{\c} (format ASS yang benar)
+        return re.sub(r'\*([^*]+)\*',
+                      lambda m: '{\\c&H00D7FF&}' + m.group(1) + '{\\c}',
+                      baris_teks)
 
     srt_lines = []
-    for i, kalimat in enumerate(kalimat_list, start=1):
-        kata_kalimat = len(kalimat.split())
-        durasi_kalimat = (kata_kalimat / total_kata) * durasi_total
-        waktu_selesai = waktu_mulai + durasi_kalimat
-
-        kata_per_kata = kalimat.split()
-        if len(kata_per_kata) > 7:
-            tengah = len(kata_per_kata) // 2
-            kalimat_rapi = " ".join(kata_per_kata[:tengah]) + "\\N" + " ".join(kata_per_kata[tengah:])
-        else:
-            kalimat_rapi = kalimat
-
-        srt_lines.append(f"{i}\n{format_srt_time(waktu_mulai)} --> {format_srt_time(waktu_selesai)}\n{kalimat_rapi}\n")
-        waktu_mulai = waktu_selesai
+    for i, (segmen, (t0, t1)) in enumerate(zip(segmen_list, segmen_timing), start=1):
+        # Jika pakai WordBoundary (timing sudah aktual), tambahkan offset hook
+        # Jika fallback proporsional, timing sudah dimulai dari 3.0
+        if word_bounds:
+            t0, t1 = t0 + OFFSET_HOOK, t1 + OFFSET_HOOK
+        # Beri jeda kecil antar segmen agar tidak menumpuk (50ms gap)
+        t1_tampil = t1
+        baris_srt = '\\N'.join(warnai_kuning(b) for b in segmen)
+        srt_lines.append(f"{i}\n{format_srt_time(t0)} --> {format_srt_time(t1_tampil)}\n{baris_srt}\n")
 
     with open(FILE_SRT, "w", encoding="utf-8") as f_sub:
         f_sub.write("\n".join(srt_lines))
-    print("Audio MP3 dan Subtitle SRT selesai dibuat!")
+    metode = "WordBoundary (sinkron presisi)" if word_bounds else "proporsional (fallback)"
+    print(f"Audio MP3 dan Subtitle modern selesai! ({len(segmen_list)} segmen, metode: {metode})")
 
 # ==========================================
 # 6. Render Video 6 Foto & Hardsub (FFmpeg)
@@ -306,8 +454,12 @@ def render_multi_photo_reels(photo_files, hook_text=""):
        (fade xfade menimbulkan ghosting/frame hantu, tidak cocok untuk reels)
     4. DURASI BERVARIASI - tiap foto 3-6 detik acak
     5. MUSIK LATAR ALAM - brown noise lembut di bawah narasi
-    6. HOOK TEXT - teks besar di tengah layar selama 3 detik pertama
+    6. HOOK TEXT - teks besar (font 36) di tengah layar selama 3 detik pertama
        (Bahasa Indonesia, 2-4 kata, provokatif)
+    7. SUBTITLE MODERN - gaya TikTok/Reels: font 26 bold kapital (LEBIH KECIL
+       dari hook utk hierarki visual), outline hitam tebal, posisi 58% dari
+       atas layar (tidak menutupi hewan), kata kunci berwarna kuning,
+       segmen pendek 2 baris yang ganti mengikuti narasi
     """
     # Tulis SRT hook: tampil 0.5 - 3.0 detik, font BESAR di tengah
     hook_filter = ""
@@ -386,15 +538,23 @@ def render_multi_photo_reels(photo_files, hook_text=""):
     label_akhir = "[vconcat]"
 
     # --- Langkah 3: hook overlay + subtitle + musik latar + render final ---\n
+    # SUBTITLE MODERN (gaya TikTok/Reels viral):
+    # - Alignment=8 (top-center) + MarginV=1080 -> teks di 58% dari atas layar
+    #   (video 1920px tinggi; 58% = ~1114px; teks 2 baris ~70px -> MarginV 1080
+    #   menaruh TENGAH blok teks tepat di 58%. TIDAK menutupi hewan di tengah.)
+    # - FontSize=26: LEBIH KECIL dari hook (36) -> hierarki visual jelas
+    #   (hook = penarik perhatian, subtitle = pendukung)
+    # - Outline=4: outline hitam TEBAL agar terbaca di atas video apapun
+    # - Kata kunci kuning via tag ASS {\\c&H00D7FF&} di file SRT
     sub_filter = (
-        "subtitles=narasi.srt:force_style='Alignment=2\\,"
-        "FontSize=14\\,"
+        "subtitles=narasi.srt:force_style='Alignment=8\\,"
+        "FontSize=26\\,"
         "Bold=1\\,"
         "PrimaryColour=&H00FFFFFF\\,"
         "OutlineColour=&H00000000\\,"
         "BorderStyle=1\\,"
-        "Outline=2\\,"
-        "MarginV=60'"
+        "Outline=4\\,"
+        "MarginV=1080'"
     )
 
     # Musik latar: brown noise (suara dengung rendah seperti angin)
@@ -604,9 +764,12 @@ def main():
     asyncio.run(create_audio_and_clean_subtitles(naskah))
     render_multi_photo_reels(photos, hook)
 
+    # Caption: bersihkan format segmen (hapus *bintang*, gabung jadi paragraf rapi)
+    naskah_caption = re.sub(r'\*([^*]+)\*', r'\1', naskah).replace('\n', ' ')
+    naskah_caption = re.sub(r'\s+', ' ', naskah_caption).strip()
     caption = (
         f"Satwa liar Jawa: {target}" + (f" ({nama_id})" if nama_id else "") + ".\n\n"
-        f"{naskah}\n\n"
+        f"{naskah_caption}\n\n"
         f"#satwajawa #florafauna #indonesia #jawa #wildlife #biodiversity #indobizarre"
     )
 
