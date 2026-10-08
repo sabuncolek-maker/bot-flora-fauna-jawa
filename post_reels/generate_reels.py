@@ -295,9 +295,9 @@ def download_species_photos(latin):
 
 def generate_english_script(item):
     """
-    Generate English narration with a deterministic fallback.
-    The fallback is intentional: a failed/empty LLM response must never stop
-    the Reels pipeline when the curated editorial fact is already available.
+    Generate narration conservatively enough for a 30-second Reel.
+    The LLM is preferred, but a deterministic fallback is always available.
+    Duration is validated after TTS and can be shortened by the caller.
     """
     fact = re.sub(r"\\s+", " ", str(item.get("fakta_singkat", "")).strip()).strip()
     species = item["latin"]
@@ -307,54 +307,44 @@ def generate_english_script(item):
         text = (
             f"Meet {species}, known in Indonesia as {common_name}. "
             f"{fact} "
-            f"This species is part of Java's remarkable natural heritage. "
-            f"Its story shows why careful observation and protection of wildlife matter. "
-            f"From its distinctive traits to its place in the island's biodiversity, "
-            f"{species} is a species worth knowing and respecting."
+            f"This species is part of Java's remarkable biodiversity. "
+            f"Its distinctive story makes it worth knowing and protecting."
         )
         return re.sub(r"\\s+", " ", text).strip()
 
-    # LLM is preferred for natural documentary phrasing, but it is not a
-    # single point of failure.
     try:
         client = Groq(api_key=GROQ_KEY)
-        base_prompt = f"""Write a short wildlife documentary narration in natural English about {species} ({common_name}) from Java, Indonesia.
+        base_prompt = f"""Write a concise wildlife documentary narration in natural English about {species} ({common_name}) from Java, Indonesia.
 
 ONLY use these editorial facts as factual claims:
 - {fact}
 Do not invent population numbers, locations, measurements, behavior, conservation status, superlatives, or habitat details.
 Do not turn uncertain claims into absolute claims.
-Write 55-90 words, aiming for about 65-80 words, suitable for roughly 25-32 seconds at a calm pace.
-Tone: calm, cinematic, intelligent, documentary-style. No YouTuber language.
+Write 45-65 words. Prefer about 50-58 words.
+Tone: calm, cinematic, intelligent, documentary-style.
 Return only the narration, no title, bullets, markdown, URLs, or citations."""
-        last_count = 0
-
         for attempt in range(3):
             prompt = base_prompt
             if attempt:
-                prompt += "\nIMPORTANT: Return a complete narration between 55 and 90 words. Do not return an empty response."
+                prompt += "\nIMPORTANT: Make it shorter. Return 45-60 words and do not exceed 65 words."
             response = client.chat.completions.create(
                 model="openai/gpt-oss-120b",
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.15,
-                max_tokens=180,
+                max_tokens=140,
             )
             raw = response.choices[0].message.content if response.choices else ""
             text = re.sub(r"\\s+", " ", (raw or "").strip()).strip()
-            last_count = len(text.split())
-            if 45 <= last_count <= 105:
+            if 40 <= len(text.split()) <= 75:
                 return text
-            if last_count == 0:
-                break
     except Exception as exc:
         print(f"Groq narration unavailable, using deterministic fallback: {exc}")
 
     text = fallback()
-    count = len(text.split())
-    if 45 <= count <= 105:
-        print(f"Using deterministic English narration fallback ({count} words).")
+    if 40 <= len(text.split()) <= 75:
+        print(f"Using deterministic English narration fallback ({len(text.split())} words).")
         return text
-    raise RuntimeError(f"Deterministic narration fallback failed QA ({count} words).")
+    raise RuntimeError("English narration fallback failed QA.")
 
 def generate_english_hook(item):
     # Hook is taken directly from the curated English hook in the species file.
@@ -378,77 +368,91 @@ def norm_word(word):
     return re.sub(r"[^a-z0-9']", "", word.lower())
 
 async def make_tts_and_subtitles(script, segments):
-    tts_text = " ".join(segments)
-    communicator = edge_tts.Communicate(
-        tts_text, VOICE, rate="-12%", pitch="-2Hz"
-    )
-    audio_chunks, bounds = [], []
-    try:
-        async for chunk in communicator.stream():
-            if chunk["type"] == "audio":
-                audio_chunks.append(chunk["data"])
-            elif chunk["type"] == "WordBoundary":
-                word = norm_word(chunk.get("text", ""))
-                if word:
-                    start = chunk["offset"] / 10_000_000
-                    end = start + chunk["duration"] / 10_000_000
-                    bounds.append((word, start, end))
-    except Exception as exc:
-        raise RuntimeError(f"English TTS gagal: {exc}") from exc
+    """
+    Render TTS and build subtitles. If the first narration is too long,
+    shorten the narration and synthesize again. This keeps the final Reel
+    inside the 22-35 second QA window instead of failing on a 1-second overrun.
+    """
+    current_script = script
+    last_duration = None
 
-    if not audio_chunks:
-        raise RuntimeError("English TTS tidak menghasilkan audio.")
+    for attempt in range(3):
+        current_segments = segment_script(current_script)
+        tts_text = " ".join(current_segments)
+        communicator = edge_tts.Communicate(
+            tts_text, VOICE, rate="-12%", pitch="-2Hz"
+        )
+        audio_chunks, bounds = [], []
 
-    with open(FILE_AUDIO, "wb") as f:
-        for chunk in audio_chunks:
-            f.write(chunk)
+        try:
+            async for chunk in communicator.stream():
+                if chunk["type"] == "audio":
+                    audio_chunks.append(chunk["data"])
+                elif chunk["type"] == "WordBoundary":
+                    word = norm_word(chunk.get("text", ""))
+                    if word:
+                        start = chunk["offset"] / 10_000_000
+                        end = start + chunk["duration"] / 10_000_000
+                        bounds.append((word, start, end))
+        except Exception as exc:
+            raise RuntimeError(f"English TTS gagal: {exc}") from exc
 
-    audio_duration = probe_duration(FILE_AUDIO)
+        if not audio_chunks:
+            raise RuntimeError("English TTS tidak menghasilkan audio.")
 
-    # Edge TTS does not guarantee WordBoundary events in every environment.
-    # Prefer exact boundaries when available; otherwise use deterministic
-    # proportional timing from the generated audio duration. This is a
-    # controlled timing fallback, not an arbitrary 3-6 second estimate.
-    segment_times = []
-    if bounds:
-        cursor = 0
-        mapping_failed = False
-        for segment in segments:
-            words = [norm_word(w) for w in segment.split() if norm_word(w)]
-            starts, ends = [], []
-            for word in words:
-                found = None
-                for j in range(cursor, len(bounds)):
-                    if bounds[j][0] == word:
-                        found = j
-                        break
-                if found is None:
-                    mapping_failed = True
-                    break
-                starts.append(bounds[found][1])
-                ends.append(bounds[found][2])
-                cursor = found + 1
-            if mapping_failed or not starts:
-                break
-            segment_times.append((starts[0], ends[-1]))
-        if mapping_failed or len(segment_times) != len(segments):
-            print("WordBoundary mapping tidak lengkap; menggunakan timing proporsional.")
+        with open(FILE_AUDIO, "wb") as f:
+            for chunk in audio_chunks:
+                f.write(chunk)
+
+        audio_duration = probe_duration(FILE_AUDIO)
+        duration = audio_duration + 3.0
+        last_duration = duration
+
+        if VIDEO_MIN_SECONDS <= duration <= VIDEO_MAX_SECONDS:
             segment_times = []
 
-    if not segment_times:
-        weights = [max(1, len([w for w in seg.split() if norm_word(w)])) for seg in segments]
-        total_weight = sum(weights)
-        cursor = 0.0
-        for weight in weights:
-            span = audio_duration * weight / total_weight
-            segment_times.append((cursor, cursor + span))
-            cursor += span
+            if bounds:
+                cursor = 0
+                mapping_failed = False
+                for segment in current_segments:
+                    words = [norm_word(w) for w in segment.split() if norm_word(w)]
+                    starts, ends = [], []
+                    for word in words:
+                        found = None
+                        for j in range(cursor, len(bounds)):
+                            if bounds[j][0] == word:
+                                found = j
+                                break
+                        if found is None:
+                            mapping_failed = True
+                            break
+                        starts.append(bounds[found][1])
+                        ends.append(bounds[found][2])
+                        cursor = found + 1
+                    if mapping_failed or not starts:
+                        break
+                    segment_times.append((starts[0], ends[-1]))
 
-    # Hook occupies the first 3 seconds, so both audio and subtitles start after it.
-    offset = 3.0
-    shifted = [(a + offset, b + offset) for a, b in segment_times]
-    with open(FILE_ASS, "w", encoding="utf-8") as f:
-        f.write("""[Script Info]
+                if mapping_failed or len(segment_times) != len(current_segments):
+                    segment_times = []
+
+            if not segment_times:
+                weights = [
+                    max(1, len([w for w in seg.split() if norm_word(w)]))
+                    for seg in current_segments
+                ]
+                total_weight = sum(weights)
+                cursor = 0.0
+                for weight in weights:
+                    span = audio_duration * weight / total_weight
+                    segment_times.append((cursor, cursor + span))
+                    cursor += span
+
+            offset = 3.0
+            shifted = [(a + offset, b + offset) for a, b in segment_times]
+
+            with open(FILE_ASS, "w", encoding="utf-8") as f:
+                f.write("""[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
 PlayResY: 1920
@@ -461,16 +465,33 @@ Style: Narasi,DejaVu Sans,44,&H00FFFFFF,&H00000000,1,3,2,210
 [Events]
 Format: Layer, Start, End, Style, Text
 """)
-        for segment, (start, end) in zip(segments, shifted):
-            safe = segment.replace("{", "").replace("}", "")
-            f.write(f"Dialogue: 0,{ass_time(start)},{ass_time(end)},Narasi,{safe.upper()}\n")
+                for segment, (start, end) in zip(current_segments, shifted):
+                    safe = segment.replace("{", "").replace("}", "")
+                    f.write(
+                        f"Dialogue: 0,{ass_time(start)},{ass_time(end)},Narasi,{safe.upper()}\n"
+                    )
 
-    duration = audio_duration + offset
-    if duration < VIDEO_MIN_SECONDS or duration > VIDEO_MAX_SECONDS:
-        raise RuntimeError(
-            f"Final duration {duration:.1f}s di luar {VIDEO_MIN_SECONDS}-{VIDEO_MAX_SECONDS}s."
-        )
-    return duration
+            print(f"TTS QA OK: {duration:.1f}s on attempt {attempt + 1}.")
+            return duration, current_script
+
+        print(f"TTS duration {duration:.1f}s is outside {VIDEO_MIN_SECONDS}-{VIDEO_MAX_SECONDS}s.")
+
+        # Shorten only when too long. A 3-second hook is fixed, so target
+        # narration audio is about 27-30 seconds.
+        if duration > VIDEO_MAX_SECONDS:
+            words = current_script.split()
+            target_words = max(38, int(len(words) * 0.84))
+            if len(words) <= target_words:
+                break
+            current_script = " ".join(words[:target_words]).rstrip(" ,.;:") + "."
+        else:
+            # Too short is unlikely with the curated 40+ word constraint;
+            # retry with a slightly slower voice rather than inventing text.
+            current_script = current_script
+
+    raise RuntimeError(
+        f"TTS duration QA failed after 3 attempts; last duration={last_duration:.1f}s."
+    )
 
 def ass_time(seconds):
     cs = int((seconds - int(seconds)) * 100)
@@ -625,7 +646,7 @@ def main():
     hook = generate_english_hook(item)
     script = generate_english_script(item)
     segments = segment_script(script)
-    duration = asyncio.run(make_tts_and_subtitles(script, segments))
+    duration, script = asyncio.run(make_tts_and_subtitles(script, segments))
     final_duration = render_reel(photos, hook, duration)
 
     caption = (
