@@ -28,10 +28,14 @@ FILE_BINTANG = os.path.join(BASE_DIR, "spesies_bintang.json")
 POST_MODE = os.environ.get("POST_MODE", "disabled").strip().lower()
 VOICE = "en-US-JennyNeural"
 MAX_PHOTOS = 6
-MIN_UNIQUE_PHOTOS = 4
+MIN_STORY_MEDIA = 4
+MIN_STORY_PHOTOS = 3
 MIN_SUBJECT_MEDIA = 4
 MIN_RELEVANCE_SCORE = 50
 PHASH_MAX_DISTANCE = 8
+MIN_PIXEL_DISTANCE = 0.075
+MIN_VIDEO_SCENE_DISTANCE = 0.08
+MAX_MEDIA_CANDIDATES_TO_SCORE = 30
 VIDEO_MIN_SECONDS = 22.0
 VIDEO_MAX_SECONDS = 35.0
 FB_API = "https://graph.facebook.com/v21.0"
@@ -335,58 +339,133 @@ def get_media_candidates(latin, common_name):
     return candidates
 
 
-def visual_phash(path, kind):
-    """Create a perceptual hash from a photo or a representative video frame."""
-    try:
-        if kind == "photo":
-            with Image.open(path) as image:
-                return imagehash.phash(image.convert("RGB"))
-        with tempfile.NamedTemporaryFile(suffix=".jpg") as tmp:
+def _image_visual_profile(image):
+    """Build lightweight visual fingerprints for composition-level diversity."""
+    image = image.convert("RGB")
+    phash = imagehash.phash(image)
+    dhash = imagehash.dhash(image)
+    gray = image.convert("L").resize((32, 32))
+    pixels = list(gray.getdata())
+    return {
+        "phash": phash,
+        "dhash": dhash,
+        "pixels": pixels,
+        "width": image.width,
+        "height": image.height,
+    }
+
+
+def _pixel_distance(first, second):
+    if not first or not second:
+        return 1.0
+    return sum(abs(a - b) for a, b in zip(first, second)) / (255.0 * len(first))
+
+
+def _visual_distance(first, second):
+    return {
+        "phash": first["phash"] - second["phash"],
+        "dhash": first["dhash"] - second["dhash"],
+        "pixels": _pixel_distance(first["pixels"], second["pixels"]),
+    }
+
+
+def _profile_from_file(path):
+    with Image.open(path) as image:
+        return _image_visual_profile(image)
+
+
+def _video_visual_profiles(path):
+    profiles = []
+    with tempfile.TemporaryDirectory() as tmpdir:
+        for index, position in enumerate(("0.15", "0.50", "0.85")):
+            frame_path = os.path.join(tmpdir, f"frame_{index}.jpg")
             probe = subprocess.run(
-                ["ffmpeg", "-y", "-ss", "0.5", "-i", path, "-frames:v", "1",
-                 "-q:v", "3", "-f", "image2", tmp.name],
+                [
+                    "ffmpeg", "-y", "-ss", position, "-i", path,
+                    "-frames:v", "1", "-q:v", "3", frame_path
+                ],
                 capture_output=True, timeout=20
             )
-            if probe.returncode != 0:
-                return None
-            with Image.open(tmp.name) as image:
-                return imagehash.phash(image.convert("RGB"))
-    except Exception as exc:
-        print(f"pHash gagal untuk {path}: {exc}")
-        return None
+            if probe.returncode != 0 or not os.path.exists(frame_path):
+                continue
+            try:
+                profiles.append(_profile_from_file(frame_path))
+            except Exception:
+                continue
+    return profiles
 
 
-def is_visually_duplicate(candidate_hash, accepted_hashes):
-    if candidate_hash is None:
+def visual_profiles_for_media(path, kind):
+    if kind == "photo":
+        profile = _profile_from_file(path)
+        return [profile], profile
+    profiles = _video_visual_profiles(path)
+    if not profiles:
+        return [], None
+    return profiles, profiles[len(profiles) // 2]
+
+
+def video_scene_diversity(profiles):
+    if len(profiles) < 2:
+        return 0.0
+    distances = []
+    for index, first in enumerate(profiles):
+        for second in profiles[index + 1:]:
+            distances.append(_visual_distance(first, second)["pixels"])
+    return max(distances) if distances else 0.0
+
+
+def is_visually_duplicate(candidate_profile, accepted_profiles):
+    if candidate_profile is None:
         return False
-    return any(candidate_hash - previous <= PHASH_MAX_DISTANCE for previous in accepted_hashes)
+    for accepted in accepted_profiles:
+        distance = _visual_distance(candidate_profile, accepted)
+        if (
+            distance["phash"] <= PHASH_MAX_DISTANCE
+            or distance["pixels"] <= MIN_PIXEL_DISTANCE
+        ):
+            return True
+    return False
+
+
+def _media_quality_score(candidate, profiles, representative):
+    if representative is None:
+        return -100.0
+    width = representative.get("width", 0)
+    height = representative.get("height", 0)
+    resolution_score = min(20.0, (width * height) / 250000.0)
+    contrast = 0.0
+    pixels = representative.get("pixels") or []
+    if pixels:
+        mean = sum(pixels) / len(pixels)
+        variance = sum((value - mean) ** 2 for value in pixels) / len(pixels)
+        contrast = min(15.0, (variance ** 0.5) / 8.0)
+    source_bonus = 10.0 if candidate["source"] == "iNaturalist" else 5.0
+    motion_bonus = min(15.0, video_scene_diversity(profiles) * 120.0) if candidate["kind"] == "video" else 0.0
+    return resolution_score + contrast + source_bonus + motion_bonus
+
+
+def _story_novelty_score(representative, accepted_profiles):
+    if representative is None or not accepted_profiles:
+        return 100.0
+    distances = [_visual_distance(representative, previous) for previous in accepted_profiles]
+    return min(
+        100.0,
+        max(
+            distance["phash"] * 2.0
+            for distance in distances
+        )
+        + max(distance["pixels"] for distance in distances) * 100.0,
+    )
 
 
 def download_species_media(latin, common_name):
     candidates = get_media_candidates(latin, common_name)
     saved = []
     hashes = set()
-    visual_hashes = []
+    accepted_profiles = []
     metadata = []
 
-    def accept_candidate(candidate, data, path):
-        digest = hashlib.sha256(data).hexdigest()
-        if digest in hashes:
-            return False
-        visual_hash = visual_phash(path, candidate["kind"])
-        if is_visually_duplicate(visual_hash, visual_hashes):
-            print(f"Media ditolak: visual terlalu mirip | {candidate['source']} | {candidate.get('title', '')}")
-            os.remove(path)
-            return False
-        hashes.add(digest)
-        if visual_hash is not None:
-            visual_hashes.append(visual_hash)
-        saved.append({"path": path, "kind": candidate["kind"]})
-        metadata.append({**candidate, "path": path, "phash": str(visual_hash) if visual_hash else None})
-        return True
-
-    # Rank evidence before downloading: high-vote iNaturalist observations and
-    # species-specific Wikimedia titles are preferred over generic search hits.
     candidates.sort(
         key=lambda x: (
             x.get("relevance", 0),
@@ -396,27 +475,75 @@ def download_species_media(latin, common_name):
         reverse=True,
     )
 
-    subject_relevant_count = 0
-    for candidate in candidates:
-        if candidate.get("relevance", 0) < MIN_RELEVANCE_SCORE:
+    def accept_candidate(candidate, data, path):
+        digest = hashlib.sha256(data).hexdigest()
+        if digest in hashes:
+            return False
+
+        try:
+            profiles, representative = visual_profiles_for_media(path, candidate["kind"])
+        except Exception as exc:
+            print(f"Media ditolak: visual analysis gagal | {candidate['source']} | {exc}")
+            return False
+
+        if representative is None:
+            return False
+
+        if candidate["kind"] == "video":
+            scene_distance = video_scene_diversity(profiles)
+            if scene_distance < MIN_VIDEO_SCENE_DISTANCE:
+                print(
+                    f"Video ditolak: scene terlalu monoton ({scene_distance:.3f}) | "
+                    f"{candidate['source']} | {candidate.get('title', '')}"
+                )
+                return False
+
+        if is_visually_duplicate(representative, accepted_profiles):
             print(
-                f"Media ditolak: relevance rendah ({candidate.get('relevance', 0)}) | "
+                f"Media ditolak: visual terlalu mirip dengan shot sebelumnya | "
                 f"{candidate['source']} | {candidate.get('title', '')}"
             )
+            return False
+
+        hashes.add(digest)
+        accepted_profiles.append(representative)
+        saved.append({"path": path, "kind": candidate["kind"]})
+        metadata.append({
+            **candidate,
+            "path": path,
+            "phash": str(representative["phash"]),
+            "dhash": str(representative["dhash"]),
+            "visual_novelty": round(_story_novelty_score(representative, accepted_profiles[:-1]), 2),
+            "visual_quality": round(_media_quality_score(candidate, profiles, representative), 2),
+            "scene_diversity": round(video_scene_diversity(profiles), 3),
+        })
+        return True
+
+    subject_relevant_count = 0
+    photo_count = 0
+
+    # Download only the highest evidence candidates first, but keep scanning
+    # deeper candidates so repeated compositions do not exhaust the story.
+    for candidate in candidates[:MAX_MEDIA_CANDIDATES_TO_SCORE]:
+        if candidate.get("relevance", 0) < MIN_RELEVANCE_SCORE:
             continue
-        if candidate["kind"] != "video" or sum(x["kind"] == "video" for x in saved) >= 2:
+        if candidate["kind"] != "video":
+            continue
+        if sum(x["kind"] == "video" for x in saved) >= 1:
             continue
         try:
             data = http_bytes(candidate["url"])
             mime = (candidate.get("mime") or "").lower()
             ext = ".webm" if "webm" in mime else ".ogv" if "ogg" in mime else ".mp4"
-            path = os.path.join(BASE_DIR, f"media_{len(saved) + 1}{ext}")
+            path = os.path.join(BASE_DIR, f"media_candidate_{len(saved) + 1}{ext}")
             with open(path, "wb") as f:
                 f.write(data)
             probe = subprocess.run(
-                ["ffprobe", "-v", "error", "-select_streams", "v:0",
-                 "-show_entries", "stream=codec_type,duration,width,height",
-                 "-of", "json", path],
+                [
+                    "ffprobe", "-v", "error", "-select_streams", "v:0",
+                    "-show_entries", "stream=codec_type,duration,width,height",
+                    "-of", "json", path
+                ],
                 capture_output=True, text=True, timeout=15
             )
             if probe.returncode != 0 or not probe.stdout.strip():
@@ -425,29 +552,30 @@ def download_species_media(latin, common_name):
             if accept_candidate(candidate, data, path):
                 subject_relevant_count += 1
                 print(
-                    f"Footage unik diterima: {len(saved)} | {candidate['source']} | "
-                    f"relevance={candidate.get('relevance', 0)} | {candidate.get('title', '')}"
+                    f"Video story candidate diterima | relevance={candidate.get('relevance', 0)} | "
+                    f"scene={metadata[-1]['scene_diversity']:.3f}"
                 )
+            else:
+                if os.path.exists(path):
+                    os.remove(path)
         except Exception as exc:
-            print(f"Footage ditolak: {candidate['url']} ({exc})")
+            print(f"Video ditolak: {candidate['url']} ({exc})")
 
-    for candidate in candidates:
+    for candidate in candidates[:MAX_MEDIA_CANDIDATES_TO_SCORE]:
         if candidate.get("relevance", 0) < MIN_RELEVANCE_SCORE:
-            print(
-                f"Media ditolak: relevance rendah ({candidate.get('relevance', 0)}) | "
-                f"{candidate['source']} | {candidate.get('title', '')}"
-            )
             continue
         if candidate["kind"] != "photo" or len(saved) >= MAX_PHOTOS:
             continue
         try:
             data = http_bytes(candidate["url"])
-            path = os.path.join(BASE_DIR, f"media_{len(saved) + 1}.jpg")
+            path = os.path.join(BASE_DIR, f"media_candidate_{len(saved) + 1}.jpg")
             with open(path, "wb") as f:
                 f.write(data)
             probe = subprocess.run(
-                ["ffprobe", "-v", "error", "-select_streams", "v:0",
-                 "-show_entries", "stream=width,height", "-of", "csv=p=0", path],
+                [
+                    "ffprobe", "-v", "error", "-select_streams", "v:0",
+                    "-show_entries", "stream=width,height", "-of", "csv=p=0", path
+                ],
                 capture_output=True, text=True, timeout=10
             )
             if probe.returncode != 0 or not probe.stdout.strip():
@@ -455,45 +583,63 @@ def download_species_media(latin, common_name):
                 continue
             if accept_candidate(candidate, data, path):
                 subject_relevant_count += 1
+                photo_count += 1
                 print(
-                    f"Foto unik diterima: {len(saved)} | {candidate['source']} | "
-                    f"relevance={candidate.get('relevance', 0)} | votes={candidate.get('votes', 0)}"
+                    f"Foto story candidate diterima: {photo_count} | "
+                    f"relevance={candidate.get('relevance', 0)} | "
+                    f"novelty={metadata[-1]['visual_novelty']:.1f}"
                 )
+            else:
+                if os.path.exists(path):
+                    os.remove(path)
         except Exception as exc:
             print(f"Foto ditolak: {candidate['url']} ({exc})")
 
-    if len(saved) < MIN_UNIQUE_PHOTOS:
+    if len(saved) < MIN_STORY_MEDIA:
         raise RuntimeError(
-            f"Hanya {len(saved)} media UNIK spesifik valid ditemukan untuk {latin}; "
-            f"minimum {MIN_UNIQUE_PHOTOS}. Tidak akan mengulang media yang sama."
+            f"Story media gagal: hanya {len(saved)}/{MIN_STORY_MEDIA} visual berbeda "
+            f"yang lolos visual diversity gate untuk {latin}."
+        )
+
+    if photo_count < MIN_STORY_PHOTOS:
+        raise RuntimeError(
+            f"Story media gagal: hanya {photo_count}/{MIN_STORY_PHOTOS} foto berbeda "
+            f"yang lolos visual diversity gate untuk {latin}."
         )
 
     if subject_relevant_count < MIN_SUBJECT_MEDIA:
         raise RuntimeError(
-            f"Media gagal relevance gate untuk {latin}: hanya {subject_relevant_count}/"
-            f"{MIN_SUBJECT_MEDIA} media lolos evidence ranking. "
-            f"Video tidak akan dipaksakan dengan footage lemah/tidak relevan."
+            f"Media gagal evidence gate untuk {latin}: hanya {subject_relevant_count}/"
+            f"{MIN_SUBJECT_MEDIA} media relevan yang lolos."
         )
 
-    # Story order: strongest evidence first, then motion, then remaining views.
     by_path = {x["path"]: x for x in metadata}
-    videos = [x for x in saved if x["kind"] == "video"]
-    photos = [x for x in saved if x["kind"] == "photo"]
-    videos.sort(key=lambda x: by_path.get(x["path"], {}).get("relevance", 0), reverse=True)
-    photos.sort(
+
+    # Story sequence: strongest subject evidence first, then visual novelty.
+    ranked = sorted(
+        saved,
         key=lambda x: (
+            by_path.get(x["path"], {}).get("visual_novelty", 0),
+            by_path.get(x["path"], {}).get("visual_quality", 0),
             by_path.get(x["path"], {}).get("relevance", 0),
-            by_path.get(x["path"], {}).get("votes", 0),
         ),
         reverse=True,
     )
-    saved = (videos[:1] + photos + videos[1:])[:MAX_PHOTOS]
+    videos = [x for x in ranked if x["kind"] == "video"]
+    photos = [x for x in ranked if x["kind"] == "photo"]
+    saved = (photos[:3] + videos[:1] + photos[3:])[:MAX_PHOTOS]
 
     with open(os.path.join(BASE_DIR, "media_sources.json"), "w", encoding="utf-8") as f:
         json.dump(
             [by_path.get(x["path"], x) for x in saved],
             f, ensure_ascii=False, indent=2
         )
+
+    print(
+        f"Story media QA OK: {len(saved)} visual berbeda; "
+        f"photos={sum(x['kind'] == 'photo' for x in saved)}; "
+        f"videos={sum(x['kind'] == 'video' for x in saved)}"
+    )
     return saved
 
 
