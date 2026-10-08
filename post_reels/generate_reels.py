@@ -5,6 +5,7 @@ import time
 import random
 import asyncio
 import subprocess
+import hashlib
 from datetime import datetime, timezone
 
 import requests
@@ -25,6 +26,7 @@ POST_MODE = os.environ.get("POST_MODE", "disabled").strip().lower()
 VOICE = "en-US-JennyNeural"
 MIN_PHOTOS = 4
 MAX_PHOTOS = 6
+MIN_UNIQUE_PHOTOS = 4
 VIDEO_MIN_SECONDS = 22.0
 VIDEO_MAX_SECONDS = 35.0
 FB_API = "https://graph.facebook.com/v21.0"
@@ -121,8 +123,6 @@ def choose_target():
     species = load_species()
     history = load_history()
 
-    # A species is considered complete only when both primary publishing
-    # platforms succeeded. Partial/failed records remain eligible for retry.
     complete = {
         x.get("species")
         for x in history
@@ -155,12 +155,9 @@ def get_last_platform_status(species):
 
 def get_photo_candidates(latin):
     """
-    Return only species-specific image candidates.
-    Source priority:
-      1) iNaturalist Research Grade observations
-      2) Wikimedia Commons file search
-      3) Wikipedia REST image as a final species-specific fallback
-    No generic stock-image fallback is allowed.
+    Return many species-specific image candidates. The downloader performs
+    content-hash deduplication so repeated URLs or resized copies cannot
+    become fake "multiple photos".
     """
     urls = []
     sources = []
@@ -175,10 +172,8 @@ def get_photo_candidates(latin):
         sources.append(meta)
         return True
 
-    # iNaturalist: gather from several observations/pages so one observation
-    # or one license filter cannot leave us with too few usable images.
     try:
-        for page in range(1, 4):
+        for page in range(1, 5):
             data = http_json(
                 "GET",
                 "https://api.inaturalist.org/v1/observations",
@@ -194,24 +189,21 @@ def get_photo_candidates(latin):
             results = data.get("results", [])
             for obs in results:
                 for photo in obs.get("photos", []):
-                    # Accept only explicitly licensed reusable photos.
                     license_code = (photo.get("license_code") or "").lower()
                     if license_code and license_code not in {"cc0", "cc-by", "cc-by-sa"}:
                         continue
                     url = (photo.get("url") or "").replace("/square.", "/large.")
-                    if add(url, {
+                    add(url, {
                         "source": "iNaturalist",
                         "url": url,
                         "license": license_code or "license-not-returned",
-                    }) and len(urls) >= MAX_PHOTOS:
-                        return list(zip(urls, sources))
+                        "observation_id": obs.get("id"),
+                    })
             if not results:
                 break
     except Exception as exc:
         print(f"iNaturalist gagal: {exc}")
 
-    # Wikimedia Commons API is more reliable than the Wikipedia REST
-    # summary endpoint and can return multiple species-specific files.
     try:
         data = http_json(
             "GET",
@@ -236,17 +228,15 @@ def get_photo_candidates(latin):
             url = info.get("thumburl") or info.get("url")
             if not mime.startswith("image/") or mime == "image/svg+xml":
                 continue
-            if add(url, {
+            add(url, {
                 "source": "Wikimedia Commons",
                 "url": url,
                 "license": "Commons file; verify file license metadata",
                 "title": page.get("title"),
-            }) and len(urls) >= MAX_PHOTOS:
-                return list(zip(urls, sources))
+            })
     except Exception as exc:
         print(f"Wikimedia Commons gagal: {exc}")
 
-    # Wikipedia REST: keep as a final fallback, but failure is non-fatal.
     try:
         data = http_json(
             "GET",
@@ -254,12 +244,11 @@ def get_photo_candidates(latin):
             timeout=15,
         )
         img = (data.get("originalimage") or {}).get("source")
-        if add(img, {
+        add(img, {
             "source": "Wikimedia/Wikipedia",
             "url": img,
             "license": "verify Commons license",
-        }) and len(urls) >= MAX_PHOTOS:
-            return list(zip(urls, sources))
+        })
     except Exception as exc:
         print(f"Wikipedia gagal: {exc}")
 
@@ -269,37 +258,51 @@ def download_species_photos(latin):
     candidates = get_photo_candidates(latin)
     saved = []
     metadata = []
+    content_hashes = set()
+
     for idx, (url, meta) in enumerate(candidates, 1):
         try:
             data = http_bytes(url)
-            path = os.path.join(BASE_DIR, f"foto_{idx}.jpg")
+            digest = hashlib.sha256(data).hexdigest()
+            if digest in content_hashes:
+                print(f"Foto duplikat ditolak: {meta.get('source')} {url}")
+                continue
+            content_hashes.add(digest)
+
+            path = os.path.join(BASE_DIR, f"foto_{len(saved) + 1}.jpg")
             with open(path, "wb") as f:
                 f.write(data)
-            # ffprobe is a second-stage media sanity check.
-            probe = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0",
-                                    "-show_entries", "stream=width,height", "-of", "csv=p=0", path],
-                                   capture_output=True, text=True, timeout=10)
+
+            probe = subprocess.run(
+                ["ffprobe", "-v", "error", "-select_streams", "v:0",
+                 "-show_entries", "stream=width,height", "-of", "csv=p=0", path],
+                capture_output=True, text=True, timeout=10
+            )
             if probe.returncode != 0 or not probe.stdout.strip():
+                os.remove(path)
                 continue
+
             saved.append(path)
             metadata.append(meta)
+            print(f"Foto unik diterima: {len(saved)} | {meta.get('source')} | {meta.get('title', '')}")
+
             if len(saved) >= MAX_PHOTOS:
                 break
         except Exception as exc:
             print(f"Foto ditolak: {url} ({exc})")
-    if len(saved) < MIN_PHOTOS:
-        raise RuntimeError(f"Hanya {len(saved)} foto spesifik valid ditemukan untuk {latin}; minimum {MIN_PHOTOS}.")
+
+    if len(saved) < MIN_UNIQUE_PHOTOS:
+        raise RuntimeError(
+            f"Hanya {len(saved)} foto UNIK spesifik valid ditemukan untuk {latin}; "
+            f"minimum {MIN_UNIQUE_PHOTOS}. Tidak akan mengulang foto yang sama."
+        )
+
     with open(os.path.join(BASE_DIR, "photo_sources.json"), "w", encoding="utf-8") as f:
         json.dump(metadata, f, ensure_ascii=False, indent=2)
     return saved
 
 def generate_english_script(item):
-    """
-    Generate narration conservatively enough for a 30-second Reel.
-    The LLM is preferred, but a deterministic fallback is always available.
-    Duration is validated after TTS and can be shortened by the caller.
-    """
-    fact = re.sub(r"\\s+", " ", str(item.get("fakta_singkat", "")).strip()).strip()
+    fact = re.sub(r"\s+", " ", str(item.get("fakta_singkat", "")).strip()).strip()
     species = item["latin"]
     common_name = item["indonesia"]
 
@@ -310,7 +313,7 @@ def generate_english_script(item):
             f"This species is part of Java's remarkable biodiversity. "
             f"Its distinctive story makes it worth knowing and protecting."
         )
-        return re.sub(r"\\s+", " ", text).strip()
+        return re.sub(r"\s+", " ", text).strip()
 
     try:
         client = Groq(api_key=GROQ_KEY)
@@ -334,7 +337,7 @@ Return only the narration, no title, bullets, markdown, URLs, or citations."""
                 max_tokens=140,
             )
             raw = response.choices[0].message.content if response.choices else ""
-            text = re.sub(r"\\s+", " ", (raw or "").strip()).strip()
+            text = re.sub(r"\s+", " ", (raw or "").strip()).strip()
             if 40 <= len(text.split()) <= 75:
                 return text
     except Exception as exc:
@@ -347,7 +350,6 @@ Return only the narration, no title, bullets, markdown, URLs, or citations."""
     raise RuntimeError("English narration fallback failed QA.")
 
 def generate_english_hook(item):
-    # Hook is taken directly from the curated English hook in the species file.
     hook = str(item.get("fakta_hook", "")).strip()
     return hook or "WILDLIFE OF JAVA"
 
@@ -368,20 +370,13 @@ def norm_word(word):
     return re.sub(r"[^a-z0-9']", "", word.lower())
 
 async def make_tts_and_subtitles(script, segments):
-    """
-    Render TTS and build subtitles. If the first narration is too long,
-    shorten the narration and synthesize again. This keeps the final Reel
-    inside the 22-35 second QA window instead of failing on a 1-second overrun.
-    """
     current_script = script
     last_duration = None
 
     for attempt in range(3):
         current_segments = segment_script(current_script)
         tts_text = " ".join(current_segments)
-        communicator = edge_tts.Communicate(
-            tts_text, VOICE, rate="-12%", pitch="-2Hz"
-        )
+        communicator = edge_tts.Communicate(tts_text, VOICE, rate="-12%", pitch="-2Hz")
         audio_chunks, bounds = [], []
 
         try:
@@ -437,10 +432,7 @@ async def make_tts_and_subtitles(script, segments):
                     segment_times = []
 
             if not segment_times:
-                weights = [
-                    max(1, len([w for w in seg.split() if norm_word(w)]))
-                    for seg in current_segments
-                ]
+                weights = [max(1, len([w for w in seg.split() if norm_word(w)])) for seg in current_segments]
                 total_weight = sum(weights)
                 cursor = 0.0
                 for weight in weights:
@@ -467,17 +459,12 @@ Format: Layer, Start, End, Style, Text
 """)
                 for segment, (start, end) in zip(current_segments, shifted):
                     safe = segment.replace("{", "").replace("}", "")
-                    f.write(
-                        f"Dialogue: 0,{ass_time(start)},{ass_time(end)},Narasi,{safe.upper()}\n"
-                    )
+                    f.write(f"Dialogue: 0,{ass_time(start)},{ass_time(end)},Narasi,{safe.upper()}\n")
 
             print(f"TTS QA OK: {duration:.1f}s on attempt {attempt + 1}.")
             return duration, current_script
 
         print(f"TTS duration {duration:.1f}s is outside {VIDEO_MIN_SECONDS}-{VIDEO_MAX_SECONDS}s.")
-
-        # Shorten only when too long. A 3-second hook is fixed, so target
-        # narration audio is about 27-30 seconds.
         if duration > VIDEO_MAX_SECONDS:
             words = current_script.split()
             target_words = max(38, int(len(words) * 0.84))
@@ -485,13 +472,9 @@ Format: Layer, Start, End, Style, Text
                 break
             current_script = " ".join(words[:target_words]).rstrip(" ,.;:") + "."
         else:
-            # Too short is unlikely with the curated 40+ word constraint;
-            # retry with a slightly slower voice rather than inventing text.
             current_script = current_script
 
-    raise RuntimeError(
-        f"TTS duration QA failed after 3 attempts; last duration={last_duration:.1f}s."
-    )
+    raise RuntimeError(f"TTS duration QA failed after 3 attempts; last duration={last_duration:.1f}s.")
 
 def ass_time(seconds):
     cs = int((seconds - int(seconds)) * 100)
@@ -541,8 +524,8 @@ Format: Layer, Start, End, Style, Text
 
     idx_audio = len(photos)
     cmd += ["-i", FILE_AUDIO]
-    filters.append(f"[vbase]ass=hook_en.ass,ass=narasi_en.ass[vout]")
-    filters.append(f"anoisesrc=color=brown:duration=40:sample_rate=44100[noise];[noise]lowpass=f=400,volume=0.06[amb]")
+    filters.append("[vbase]ass=hook_en.ass,ass=narasi_en.ass[vout]")
+    filters.append("anoisesrc=color=brown:duration=40:sample_rate=44100[noise];[noise]lowpass=f=400,volume=0.06[amb]")
     filters.append(f"[{idx_audio}:a]adelay=3000|3000[narr];[narr][amb]amix=inputs=2:duration=first[aout]")
     cmd += ["-filter_complex", ";".join(filters),
             "-map", "[vout]", "-map", "[aout]",
@@ -649,9 +632,11 @@ def main():
     duration, script = asyncio.run(make_tts_and_subtitles(script, segments))
     final_duration = render_reel(photos, hook, duration)
 
+    # Short social caption: keep the post text separate from the longer narration.
     caption = (
-        f"{item['indonesia']} ({item['latin']}) — wildlife of Java, Indonesia.\\n\\n"
-        f"{script}\\n\\n#JavaWildlife #IndonesiaWildlife #FloraFaunaJawa #Wildlife #Biodiversity"
+        f"{item['indonesia']} ({item['latin']}) — wildlife of Java.\n\n"
+        f"{item['fakta_singkat']}\n\n"
+        f"#JavaWildlife #IndonesiaWildlife #FloraFaunaJawa #Biodiversity"
     )
     print(f"VIDEO QA OK: {final_duration:.1f}s; voice={VOICE}; photos={len(photos)}")
 
@@ -663,7 +648,6 @@ def main():
         print("DRY RUN OK: video rendered and delivered to Telegram; no Facebook/Instagram publishing and no history update.")
         return
 
-    # Production only reaches here after all content/media QA above.
     previous = get_last_platform_status(item["latin"])
     status = {
         "facebook": previous.get("facebook", "failed"),
