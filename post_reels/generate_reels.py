@@ -119,10 +119,22 @@ def gbif_occurrence_exists(latin):
 
 def choose_target():
     species = load_species()
-    history = {x.get("species") for x in load_history() if isinstance(x, dict)}
-    available = [s for s in species if s["latin"] not in history]
+    history = load_history()
+
+    # A species is considered complete only when both primary publishing
+    # platforms succeeded. Partial/failed records remain eligible for retry.
+    complete = {
+        x.get("species")
+        for x in history
+        if isinstance(x, dict)
+        and (x.get("platforms") or {}).get("facebook") == "success"
+        and (x.get("platforms") or {}).get("instagram") == "success"
+    }
+
+    available = [s for s in species if s["latin"] not in complete]
     if not available:
         available = species
+
     random.shuffle(available)
     for item in available:
         try:
@@ -132,6 +144,14 @@ def choose_target():
         except Exception as exc:
             print(f"GBIF check gagal untuk {item['latin']}: {exc}")
     raise RuntimeError("Tidak ada spesies kurasi dengan occurrence GBIF Jawa yang tervalidasi.")
+
+def get_last_platform_status(species):
+    for record in reversed(load_history()):
+        if isinstance(record, dict) and record.get("species") == species:
+            platforms = record.get("platforms")
+            if isinstance(platforms, dict):
+                return platforms
+    return {}
 
 def get_photo_candidates(latin):
     """
@@ -337,31 +357,9 @@ Return only the narration, no title, bullets, markdown, URLs, or citations."""
     raise RuntimeError(f"Deterministic narration fallback failed QA ({count} words).")
 
 def generate_english_hook(item):
-    # Hook is derived from the curated editorial hook, translated/reframed,
-    # never invented from a random LLM claim.
-    hooks = {
-        "BUNGA PARASIT LANGKA": "RARE PARASITIC BLOOM",
-        "BUNGA ABADI GUNUNG": "THE MOUNTAIN EVERLASTING",
-        "GARUDA INDONESIA": "JAVA'S ICONIC EAGLE",
-        "HANTU HUTAN JAWA": "JAVA'S ELUSIVE CAT",
-        "TERLANGKA DI DUNIA": "ONE OF EARTH'S RAREST RHINOS",
-        "PENYANYI HUTAN": "THE FOREST SINGER",
-        "MONYET BERJENGGOT": "JAVA'S BEARDED LEAF MONKEY",
-        "BAYI EMAS": "THE GOLDEN BABY",
-        "KODOK BERDARAH": "THE RED FROG",
-        "PRIMATA BERBISA": "THE VENOMOUS PRIMATE",
-        "SISIK BAJA": "THE ARMORED MAMMAL",
-        "ANJING HUTAN": "JAVA'S WILD DOG",
-        "MERAK ASLI JAWA": "JAVA'S GREEN PEAFOWL",
-        "KATAK BISA TERBANG": "THE FLYING FROG",
-        "KUCING HUTAN MINI": "THE TINY WILDCAT",
-        "BANTENG LIAR": "JAVA'S WILD BANTENG",
-        "RAKSASA PEMBERSIH": "THE FOREST CLEANER",
-        "TANAMAN PEMANGSA": "THE CARNIVOROUS PLANT",
-        "KOPI TERMAHAL DUNIA": "THE CIVET BEHIND KOPI LUWAK",
-        "NAGA JAWA": "JAVA'S GIANT LIZARD",
-    }
-    return hooks.get(item["fakta_hook"], "WILDLIFE OF JAVA")
+    # Hook is taken directly from the curated English hook in the species file.
+    hook = str(item.get("fakta_hook", "")).strip()
+    return hook or "WILDLIFE OF JAVA"
 
 def segment_script(text):
     sentences = [x.strip() for x in re.split(r"(?<=[.!?])\s+", text) if x.strip()]
@@ -637,21 +635,36 @@ def main():
     print(f"VIDEO QA OK: {final_duration:.1f}s; voice={VOICE}; photos={len(photos)}")
 
     if POST_MODE == "dry_run":
-        send_telegram(FILE_FINAL, caption)
-        print("DRY RUN: no Facebook/Instagram publishing and no history update.")
+        if not (TELEGRAM_TOKEN and TELEGRAM_CHAT_ID):
+            raise RuntimeError("Dry-run membutuhkan TELEGRAM_BOT_TOKEN dan TELEGRAM_CHAT_ID.")
+        if not send_telegram(FILE_FINAL, caption):
+            raise RuntimeError("Telegram review gagal; dry-run dianggap gagal.")
+        print("DRY RUN OK: video rendered and delivered to Telegram; no Facebook/Instagram publishing and no history update.")
         return
 
     # Production only reaches here after all content/media QA above.
-    status = {"facebook": "failed", "instagram": "failed", "telegram": "failed"}
+    previous = get_last_platform_status(item["latin"])
+    status = {
+        "facebook": previous.get("facebook", "failed"),
+        "instagram": previous.get("instagram", "failed"),
+        "telegram": previous.get("telegram", "failed"),
+    }
+
     try:
-        status["telegram"] = "success" if send_telegram(FILE_FINAL, caption) else "failed"
-        status["facebook"] = "success" if post_facebook(FILE_FINAL, caption) else "failed"
-        ig_id = get_instagram_id()
-        if not ig_id:
-            raise RuntimeError("Instagram Business Account ID tidak ditemukan.")
-        status["instagram"] = "success" if post_instagram(FILE_FINAL, caption, ig_id) else "failed"
+        if status["telegram"] != "success":
+            status["telegram"] = "success" if send_telegram(FILE_FINAL, caption) else "failed"
+
+        if status["facebook"] != "success":
+            status["facebook"] = "success" if post_facebook(FILE_FINAL, caption) else "failed"
+
+        if status["instagram"] != "success":
+            ig_id = get_instagram_id()
+            if not ig_id:
+                raise RuntimeError("Instagram Business Account ID tidak ditemukan.")
+            status["instagram"] = "success" if post_instagram(FILE_FINAL, caption, ig_id) else "failed"
     finally:
         save_history_record(item["latin"], status)
+
     if status["facebook"] != "success" or status["instagram"] != "success":
         raise RuntimeError(f"Publishing incomplete: {status}")
     print("REELS PRODUCTION SUCCESS:", status)
