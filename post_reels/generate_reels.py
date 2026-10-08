@@ -7,7 +7,6 @@ import asyncio
 import subprocess
 import hashlib
 import tempfile
-from io import BytesIO
 from datetime import datetime, timezone
 
 import requests
@@ -416,10 +415,10 @@ def generate_english_script(item, content_format):
             ),
             "one_fact": (
                 f"Here is one fact worth remembering about {common_name}. {fact} "
-                f"This species is part of Java's remarkable wildlife and biodiversity."
+                f"This species is part of Java's remarkable biodiversity."
             ),
             "detective": (
-                f"Wildlife case file: can you identify the species from the evidence? "
+                f"Case file: can you identify the species from the evidence? "
                 f"The answer is {common_name}, scientifically known as {species}. {fact} "
                 f"Another fascinating story from Java's wildlife."
             ),
@@ -858,12 +857,14 @@ def main():
     )
 
     if POST_MODE == "dry_run":
-        if not (TELEGRAM_TOKEN and TELEGRAM_CHAT_ID):
-            raise RuntimeError("Dry-run membutuhkan TELEGRAM_BOT_TOKEN dan TELEGRAM_CHAT_ID.")
-        if not send_telegram(FILE_FINAL, caption):
-            raise RuntimeError("Telegram review gagal; dry-run dianggap gagal.")
-        cleanup_runtime_artifacts()
-        print("DRY RUN OK: video rendered, delivered to Telegram, and runtime artifacts cleaned; no publishing and no history update.")
+        try:
+            if not (TELEGRAM_TOKEN and TELEGRAM_CHAT_ID):
+                raise RuntimeError("Dry-run membutuhkan TELEGRAM_BOT_TOKEN dan TELEGRAM_CHAT_ID.")
+            if not send_telegram(FILE_FINAL, caption):
+                raise RuntimeError("Telegram review gagal; dry-run dianggap gagal.")
+            print("DRY RUN OK: video rendered and delivered to Telegram; no publishing and no history update.")
+        finally:
+            cleanup_runtime_artifacts()
         return
 
     previous = get_last_platform_status(item["latin"])
@@ -890,10 +891,10 @@ def main():
             "media_count": len(media),
             "footage_count": footage_count,
         })
+        cleanup_runtime_artifacts()
 
     if status["facebook"] != "success" or status["instagram"] != "success":
         raise RuntimeError(f"Publishing incomplete: {status}")
-    cleanup_runtime_artifacts()
     print("REELS PRODUCTION SUCCESS:", status)
 
 if __name__ == "__main__":
