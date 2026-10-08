@@ -35,6 +35,7 @@ MIN_SUBJECT_MEDIA = 4
 MIN_RELEVANCE_SCORE = 50
 PHASH_MAX_DISTANCE = 8
 MIN_PIXEL_DISTANCE = 0.075
+VISUAL_DUPLICATE_SIGNALS_REQUIRED = 2
 MIN_VIDEO_SCENE_DISTANCE = 0.08
 MAX_MEDIA_CANDIDATES_TO_SCORE = 30
 VISION_MODEL = "qwen/qwen3.8-27b"
@@ -424,14 +425,18 @@ def video_scene_diversity(profiles):
 
 
 def is_visually_duplicate(candidate_profile, accepted_profiles):
+    """Reject only when multiple independent visual signals agree on duplication."""
     if candidate_profile is None:
         return False
+
     for accepted in accepted_profiles:
         distance = _visual_distance(candidate_profile, accepted)
-        if (
-            distance["phash"] <= PHASH_MAX_DISTANCE
-            or distance["pixels"] <= MIN_PIXEL_DISTANCE
-        ):
+        signals = (
+            distance["phash"] <= PHASH_MAX_DISTANCE,
+            distance["dhash"] <= PHASH_MAX_DISTANCE,
+            distance["pixels"] <= MIN_PIXEL_DISTANCE,
+        )
+        if sum(signals) >= VISUAL_DUPLICATE_SIGNALS_REQUIRED:
             return True
     return False
 
