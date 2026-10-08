@@ -185,9 +185,13 @@ def download_6_photos(scientific_name):
 # 4. Naskah Narasi Dokumenter (Groq AI)
 # ==========================================
 def generate_naskah_indonesia(scientific_name, nama_indonesia=""):
-    """Narasi dokumenter satwa dalam Bahasa Indonesia yang santai tapi informatif."""
+    """Narasi dokumenter satwa dalam Bahasa Indonesia.
+
+    DUA TAHAP (agar narasi natural tapi subtitle tetap modern):
+    1. Groq bikin narasi NATURAL (kalimat normal seperti ngobrol, bukan teriak-teriak)
+    2. Python memecah jadi segmen subtitle + menandai kata kunci otomatis
+    """
     client = Groq(api_key=GROQ_KEY)
-    # Kalau ada fakta singkat dari daftar bintang, sertakan sebagai panduan akurasi
     fakta_panduan = ""
     for s in load_spesies_bintang():
         if s["latin"].lower() == scientific_name.lower():
@@ -196,32 +200,70 @@ def generate_naskah_indonesia(scientific_name, nama_indonesia=""):
     prompt = f"""
     Tulis narasi dokumenter satwa liar dalam Bahasa Indonesia tentang '{scientific_name}' ({nama_indonesia}) dari Pulau Jawa.
     {fakta_panduan}
-    Gaya: dokumenter alam yang santai dan ramah, seperti bercerita ke teman. Jangan kaku seperti buku teks.
-    ATURAN KERAS akurasi: DILARANG menyebut habitat atau latar spesifik yang tidak terverifikasi (jangan tulis "hutan lebat", "lereng berkabut", "kanopi hutan", "rawa", "puncak gunung" atau sejenisnya). Footage hanya foto biasa yang tidak menunjukkan habitat spesifik. Fokus hanya pada: apa spesiesnya, fakta uniknya, perilakunya, dan kenapa ia istimewa. Narasi harus tetap benar walau footage-nya hanya padang rumput biasa.
-    FORMAT KHUSUS untuk subtitle modern: pecah narasi menjadi 5-6 SEGMEN pendek.
-    - Tiap segmen: maksimal 2 baris, tiap baris maksimal 4 kata
-    - Tulis HURUF KAPITAL semua
-    - Tandai kata kunci penting (angka, nama, sifat unik) dengan *bintang* di kedua sisinya
-    - Pisahkan tiap segmen dengan satu baris kosong
-    Contoh format yang benar:
-    BANGAU TONGTONG
-    ASLI *PULAU JAWA*
-
-    SETINGGI *SATU METER*
-    PARUH BESAR KUAT
-
-    *MAKAN BANGKAI*
-    JAGA ALAM BERSIH
-    Kembalikan HANYA teks narasi ter-segmentasi. Tanpa markdown, tanpa judul, tanpa nomor.
+    Gaya: seperti narator dokumenter profesional yang tenang dan berwibawa. Kalimat normal dan natural,
+    seperti sedang bercerita. JANGAN pakai gaya YouTuber heboh ("hay teman-teman!", "wow amazing!").
+    JANGAN pakai huruf kapital semua. Tulis seperti naskah berita yang dibacakan dengan tenang.
+    Panjang: 4-6 kalimat pendek. Total sekitar 25-35 detik jika dibacakan pelan.
+    ATURAN KERAS akurasi: DILARANG menyebut habitat atau latar spesifik yang tidak terverifikasi
+    (jangan tulis "hutan lebat", "lereng berkabut", "kanopi hutan", "rawa", "puncak gunung" atau sejenisnya).
+    Fokus hanya pada: apa spesiesnya, fakta uniknya, perilakunya, dan kenapa ia istimewa.
+    Kembalikan HANYA teks narasi. Tanpa markdown, tanpa judul, tanpa nomor.
     """
     completion = client.chat.completions.create(
         model="openai/gpt-oss-120b",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.5
     )
-    naskah = completion.choices[0].message.content.strip().replace('"', '')
-    print(f"Naskah Narasi:\n{naskah}\n")
-    return naskah
+    narasi_natural = completion.choices[0].message.content.strip().replace('"', '')
+    print(f"Narasi natural:\n{narasi_natural}\n")
+
+    # TAHAP 2: pecah jadi segmen subtitle + tandai kata kunci
+    # Kata kunci = angka, nama spesies, dan kata sifat superlatif
+    naskah_segmen = segmentasi_untuk_subtitle(narasi_natural, scientific_name, nama_indonesia)
+    print(f"Naskah segmen subtitle:\n{naskah_segmen}\n")
+    return naskah_segmen
+
+
+def segmentasi_untuk_subtitle(narasi, scientific_name="", nama_indonesia=""):
+    """Pecah narasi natural jadi segmen subtitle pendek + tandai kata kunci.
+
+    Aturan:
+    - Tiap segmen: maksimal 8 kata (cukup untuk 2 baris di layar)
+    - Kata kunci (angka, nama spesies, superlatif) ditandai *bintang*
+    - Output: HURUF KAPITAL, segmen dipisah baris kosong
+    """
+    import re
+    # Pecah jadi kalimat
+    kalimat_list = [k.strip() for k in re.split(r'(?<=[.!?])\s+', narasi) if k.strip()]
+    segmen_list = []
+    for kalimat in kalimat_list:
+        kata = kalimat.split()
+        # Pecah kalimat panjang jadi potongan max 8 kata
+        for i in range(0, len(kata), 8):
+            potongan = kata[i:i+8]
+            segmen_list.append(' '.join(potongan))
+
+    # Tandai kata kunci: angka, nama latin, nama indonesia, superlatif
+    superlatif = ['terbesar', 'terkecil', 'terlangka', 'tercepat', 'terpanjang',
+                  'paling', 'satu-satunya', 'langka', 'unik', 'raksasa',
+                  'berbisa', 'beracun', 'terancam', 'endemik']
+    hasil_segmen = []
+    for segmen in segmen_list:
+        kata_baru = []
+        for w in segmen.split():
+            w_bersih = re.sub(r'[^a-zA-Z0-9-]', '', w).lower()
+            is_angka = bool(re.search(r'\d', w))
+            is_nama = (scientific_name.lower() in w_bersih or
+                       (nama_indonesia and nama_indonesia.lower() in w_bersih))
+            is_superlatif = w_bersih in superlatif
+            if is_angka or is_nama or is_superlatif:
+                # Tandai tapi pertahankan tanda baca asli
+                kata_baru.append(f"*{w}*")
+            else:
+                kata_baru.append(w)
+        hasil_segmen.append(' '.join(kata_baru).upper())
+
+    return '\n\n'.join(hasil_segmen)
 
 def generate_hook_text(scientific_name, nama_indonesia=""):
     """
