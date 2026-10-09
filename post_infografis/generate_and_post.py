@@ -305,7 +305,9 @@ with open(image_path, "rb") as img_file:
         "caption": data["fb_caption"], 
         "access_token": FB_ACCESS_TOKEN
     }
-    res = requests.post(fb_url, data=payload, files={"source": img_file}, timeout=30)\nif not res.ok:\n    raise RuntimeError(f"Facebook upload gagal HTTP {res.status_code}: {res.text[:500]}")
+    res = requests.post(fb_url, data=payload, files={"source": img_file}, timeout=30)
+if not res.ok:
+    raise RuntimeError(f"Facebook upload gagal HTTP {res.status_code}: {res.text[:500]}")
 
 res_json = res.json()
 
