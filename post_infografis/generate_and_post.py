@@ -224,7 +224,7 @@ Tentukan apakah ini FLORA (tumbuhan) atau FAUNA (hewan), sebutkan status konserv
 
 Kaidah isi:
 1. 'iucn_status': Isi status kelangkaan dalam bahasa Indonesia yang ringkas, contoh: 'Kritis (CR)', 'Genting (EN)'.
-2. 'facts': Buat 3 fakta unik yang ceritanya enak dibaca orang biasa. Penjelasannya padat, maksimal 20 kata per fakta. Pastikan faktanya relevan dengan wujud asli spesies tersebut!
+2. 'facts': Buat 3 fakta unik yang ceritanya enak dibaca orang biasa. Penjelasannya padat, maksimal 20 kata per fakta. Pastikan faktanya relevan dengan wujud asli spesies tersebut! ATURAN KERAS ANTI-TAUTOLOGI: 'desc' DILARANG mengulang 'title' dengan kata lain — 'desc' WAJIB menambah informasi baru berupa fungsi, angka, perbandingan, sebab-akibat, atau perilaku. Contoh SALAH: title 'Bulu Hitam di Sayap' + desc 'Sayapnya berwarna hitam pekat'. Contoh BENAR: desc menjelaskan GUNA atau DAMPAK dari ciri tersebut, bukan sekadar mendeskripsikan ulang.
 3. 'fb_caption': Tulis naskah postingan Facebook yang ramah, santai, sisipkan fakta kelangkaan dan hashtag relevan.
 
 Ikuti format JSON persis seperti ini:
