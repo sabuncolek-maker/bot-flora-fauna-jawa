@@ -16,3 +16,4 @@ Persea americana
 Glyptothorax platypogon
 Hylobates moloch
 Trachypithecus auratus
+Manis javanica
